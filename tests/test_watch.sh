@@ -84,6 +84,9 @@ print('ok - simultaneous same-directory roots are ambiguous')
 resume = {'foreground_processes': [{'name': 'codex', 'argv': ['codex', 'resume', 'root', '--yolo']}]}
 assert resolve(sessions, '/same', 'p1', resume, [{'agent': 'codex', 'pane_id': 'p2', 'cwd': '/same'}], started) == 'root'
 print('ok - explicit resume ID disambiguates same-directory panes')
+resume['foreground_processes'][0]['argv'].insert(1, '--no-daemon')
+assert resolve(sessions, '/same', 'p1', resume, [{'agent': 'codex', 'pane_id': 'p2', 'cwd': '/same'}], started) == 'root'
+print('ok - explicit resume ID survives the no-daemon global flag')
 fixture('root', old)
 fixture('collision', old)
 claimed = [{'agent': 'codex', 'pane_id': 'p2', 'cwd': '/other', 'agent_session': {'kind': 'id', 'value': 'collision'}}]

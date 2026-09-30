@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.7] - 2026-09-30
+### Fixed
+- Recover explicitly resumed Codex sessions when `--no-daemon` appears before the `resume` subcommand.
+
 ## [0.1.6] - 2026-09-30
 ### Fixed
 - Recover Codex cache metadata when Herdr has no native session ID, using foreground process information with guards against same-directory panes, subagents, and ambiguous roots.

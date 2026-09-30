@@ -88,6 +88,8 @@ def resolve_session(sessions, cwd, pane_id, process, panes, started):
     if len(processes) != 1:
         return None
     argv = processes[0].get("argv") or []
+    # Current Codex can put --no-daemon before its resume subcommand.
+    argv = [arg for arg in argv if arg != "--no-daemon"]
     # An explicit resume ID is exact even when several panes share one directory.
     if len(argv) >= 3 and argv[1] == "resume" and SESSION_ID.fullmatch(argv[2]) and not argv[2].startswith("-"):
         return argv[2]
