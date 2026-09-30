@@ -33,6 +33,92 @@ printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$uuid7\"}}" >"$r
 assert_eq "$(rollout_for_session "$uuid7")" "$roll7" 'UUIDv7 timestamp selects exact historical rollout'
 
 assert_eq "$(latest_usage "$roll" "$sid")" $'2026-09-06T10:00:00Z\t1000\t500\tm1\tp1' 'malformed lines are ignored'
+
+# Codex CLI token_count uses per-request counts, not cumulative session totals.
+modern_roll="$CODEX_SESSIONS_DIR/2026/09/06/rollout-modern.jsonl"
+cat >"$modern_roll" <<'JSONL'
+{"type":"session_meta","payload":{"id":"modern","model_provider":"custom-provider"}}
+{"type":"turn_context","payload":{"model":"gpt-current"}}
+{"type":"event_msg","timestamp":"2026-09-06T10:03:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100000,"cached_input_tokens":90000},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":400}}}}
+{"type":"event_msg","timestamp":"2026-09-06T10:04:00Z","payload":{"type":"token_count","info":null,"rate_limits":{}}}
+not json
+{"type":"event_msg","payload":
+JSONL
+assert_eq "$(latest_usage "$modern_roll" modern)" $'2026-09-06T10:03:00Z\t1000\t400\tgpt-current\tcustom-provider' 'Codex token_count reads last usage and ignores quota-only and partial rows'
+assert_eq "$(codex_usage modern | cut -f1-10)" $'codex\tmodern\t2026-09-06T10:03:00Z\t1000\t400\t0\t0\t0\tgpt-current\tcustom-provider' 'Codex adapter preserves model/provider column alignment'
+printf '%s\n' '{"type":"token_usage_record","timestamp":"2026-09-06T10:05:00Z","payload":{"session_id":"modern","usage":{"input_tokens":2000,"cached_input_tokens":1600}}}' >>"$modern_roll"
+assert_eq "$(latest_usage "$modern_roll" modern)" $'2026-09-06T10:05:00Z\t2000\t1600\tgpt-current\tcustom-provider' 'newer token_usage_record wins and inherits rollout metadata'
+printf '%s\n' '{"type":"turn_context","payload":{"model":"next-model"}}' >>"$modern_roll"
+assert_eq "$(latest_usage "$modern_roll" modern | cut -f4)" gpt-current 'later turn context does not relabel previous usage'
+printf '%s\n' '{"type":"event_msg","timestamp":"2026-09-06T10:06:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":3000,"cached_input_tokens":0}}}}' >>"$modern_roll"
+assert_eq "$(latest_usage "$modern_roll" modern)" $'2026-09-06T10:06:00Z\t3000\t0\tnext-model\tcustom-provider' 'newer token_count wins including a real zero-cache request'
+printf '%s\n' '{"type":"token_usage_record","timestamp":"2026-09-06T10:07:00Z","payload":{"session_id":"other","usage":{"input_tokens":4000,"cached_input_tokens":3500}}}' '{"type":"event_msg","timestamp":"2026-09-06T10:08:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":4000,"cached_input_tokens":-1}}}}' '{"type":"event_msg","timestamp":"2026-09-06T10:09:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":4000,"cached_input_tokens":3500}}}}' >>"$modern_roll"
+assert_eq "$(latest_usage "$modern_roll" modern | cut -f1-3)" $'2026-09-06T10:06:00Z\t3000\t0' 'foreign session, invalid counts, and cumulative-only rows are ignored'
+bare_roll="$TMP/bare-codex.jsonl"
+printf '%s\n' '{"type":"token_usage_record","timestamp":"2026-09-06T10:00:00Z","payload":{"usage":{"input_tokens":1000,"cached_input_tokens":500}}}' >"$bare_roll"
+assert_eq "$(latest_usage "$bare_roll" bare)" $'2026-09-06T10:00:00Z\t1000\t500\tcodex\topenai' 'missing model/provider use nonempty defaults before TSV parsing'
+assert_eq "$(CODEX_HOME="$TMP/custom-home" env -u CODEX_SESSIONS_DIR -u HODEX_SESSIONS_DIR bash -c 'source "$1/lib/core.sh"; printf "%s" "$SESSIONS_DIR"' _ "$ROOT")" "$TMP/custom-home/sessions" 'Codex home overrides the default session directory'
+
+if python3 - "$ROOT" "$TMP" <<'PY'
+import json, os, pathlib, runpy, sys, time
+module = runpy.run_path(str(pathlib.Path(sys.argv[1]) / 'lib/codex_session.py'))
+resolve = module['resolve_session']
+sessions = pathlib.Path(sys.argv[2]) / 'resolver-sessions'
+sessions.mkdir()
+started = time.time()
+process = {'foreground_processes': [{'name': 'codex', 'argv': ['codex'], 'pid': os.getpid()}]}
+def fixture(sid, created, **extra):
+    payload = {'id': sid, 'cwd': '/same', 'timestamp': created, 'originator': 'codex-tui', 'source': 'vscode', **extra}
+    path = sessions / f'rollout-{sid}.jsonl'
+    path.write_text(json.dumps({'type': 'session_meta', 'payload': payload}) + '\n')
+    return path
+fresh = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(started))
+old = '2026-01-01T00:00:00Z'
+fixture('root', fresh)
+fixture('child', fresh, parent_thread_id='root', source={'subagent': {}}, thread_source='subagent')
+assert resolve(sessions, '/same', 'p1', process, [], started) == 'root'
+print('ok - missing native ID resolves a fresh root and excludes subagents')
+fixture('collision', fresh)
+assert resolve(sessions, '/same', 'p1', process, [], started) is None
+print('ok - simultaneous same-directory roots are ambiguous')
+resume = {'foreground_processes': [{'name': 'codex', 'argv': ['codex', 'resume', 'root', '--yolo']}]}
+assert resolve(sessions, '/same', 'p1', resume, [{'agent': 'codex', 'pane_id': 'p2', 'cwd': '/same'}], started) == 'root'
+print('ok - explicit resume ID disambiguates same-directory panes')
+fixture('root', old)
+fixture('collision', old)
+claimed = [{'agent': 'codex', 'pane_id': 'p2', 'cwd': '/other', 'agent_session': {'kind': 'id', 'value': 'collision'}}]
+assert resolve(sessions, '/same', 'p1', process, claimed, started) == 'root'
+print('ok - unique active cwd fallback excludes sessions assigned to other panes')
+assert resolve(sessions, '/same', 'p1', process, [], started) is None
+print('ok - multiple active roots refuse a newest-file guess')
+assert resolve(sessions, '/same', 'p1', process, claimed + [{'agent': 'codex', 'pane_id': 'p3', 'cwd': '/same'}], started) is None
+print('ok - cwd fallback refuses multiple live panes in the same directory')
+assert resolve(sessions, '/same', 'p1', {'foreground_processes': []}, claimed, started) is None
+print('ok - missing Codex foreground process cannot select a historical session')
+assert resolve(sessions, '/same', 'p1', process, claimed, None) is None
+print('ok - missing process launch time cannot select a historical session')
+fixture('root', fresh)
+resumed = fixture('collision', old)
+with resumed.open('a') as handle:
+    handle.write(json.dumps({'type': 'token_usage_record', 'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(started + 1)), 'payload': {'usage': {'input_tokens': 1000, 'cached_input_tokens': 400}}}) + '\n')
+assert resolve(sessions, '/same', 'p1', process, [], started) == 'collision'
+print('ok - interactive resume selects the used root instead of an empty bootstrap thread')
+other = fixture('other-active', old)
+for path, total_in, total_out in [(resumed, 98901000, 241030), (other, 41000, 1800)]:
+    with path.open('a') as handle:
+        handle.write(json.dumps({'type': 'token_usage_record', 'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(started + 1)), 'payload': {'usage': {'input_tokens': 1000, 'cached_input_tokens': 400}, 'thread_token_usage': {'input_tokens': total_in, 'output_tokens': total_out}}}) + '\n')
+title_panes = [{'pane_id': 'p1', 'agent': 'codex', 'cwd': '/same', 'terminal_title_stripped': 'Working | Context 78% used | 98.9M in | 241K out | GPT-current'}]
+assert resolve(sessions, '/same', 'p1', process, title_panes, started) == 'collision'
+print('ok - pane title totals disambiguate multiple active root rollouts')
+with other.open('a') as handle:
+    handle.write(json.dumps({'type': 'event_msg', 'timestamp': fresh, 'payload': {'type': 'token_count', 'info': {'total_token_usage': {'input_tokens': 98902000, 'output_tokens': 241000}}}}) + '\n')
+assert resolve(sessions, '/same', 'p1', process, title_panes, started) is None
+print('ok - indistinguishable rounded title totals remain ambiguous')
+assert abs(module['process_started'](os.getpid()) - started) < 5
+print('ok - process start time is read from the local process table')
+PY
+then :; else not_ok 'Codex missing-session resolver fixtures'; fi
+
 assert_eq "$(fmt_tokens 0)" 0 'zero formatting'; assert_eq "$(fmt_tokens 10000)" 10.0k 'thousands formatting'; assert_eq "$(fmt_tokens 2000000)" 2.0M 'millions formatting'
 init_state; report_pane() { :; }; clear_pane() { :; }
 update_pane paneA "$sid"; d1=$(jq -r .active.deadline "$(state_path paneA)"); update_pane paneA "$sid"; d2=$(jq -r .active.deadline "$(state_path paneA)")
@@ -159,7 +245,7 @@ fi
 
 fake="$TMP/fake-herdr"; reports="$TMP/watcher-reports"; panes="$TMP/panes.json"
 # shellcheck disable=SC2016
-printf '%s\n' '#!/usr/bin/env bash' 'if [[ "$1 $2" == "pane list" ]]; then cat "$FAKE_PANES"; else printf "%s\n" "$*" >>"$FAKE_REPORTS"; fi' >"$fake"; chmod +x "$fake"
+printf '%s\n' '#!/usr/bin/env bash' 'if [[ "$1 $2" == "pane list" ]]; then cat "$FAKE_PANES"; elif [[ "$1 $2" == "pane process-info" ]]; then cat "${FAKE_PROCESS_INFO:-/dev/null}"; else printf "%s\n" "$*" >>"$FAKE_REPORTS"; fi' >"$fake"; chmod +x "$fake"
 printf '%s\n' '{"result":{"panes":[{"pane_id":"p1","agent":"codex","cwd":"/same","agent_session":{"kind":"id","value":"aaa111"}},{"pane_id":"p2","agent":"codex","cwd":"/same","agent_session":{"kind":"id","value":"bbb222"}},{"pane_id":"p3","agent":"agy","cwd":"/same","agent_session":{"kind":"id","value":"agy-missing"}},{"pane_id":"p4","agent":"opencode","cwd":"/same","agent_session":{"kind":"id","value":"oc-1"}}]}}' >"$panes"
 FAKE_PANES="$panes" FAKE_REPORTS="$reports" HERDR_BIN_PATH="$fake" WATCH_ONCE=1 bash "$ROOT/watch.sh"
 assert_cmd "grep -q 'p1.*cache=' \"$reports\"" 'watcher reports native session pane'
@@ -181,6 +267,28 @@ assert_cmd "grep -q 'paneNumeric.*cache_pct=80%' \"$reports\" && grep -q 'paneNu
 printf '%s\n' '{"result":{"panes":[{"pane_id":"p1","agent":"codex","cwd":"/same","agent_session":{"kind":"id","value":"aaa111"}}]}}' >"$panes"
 FAKE_PANES="$panes" FAKE_REPORTS="$reports" HERDR_BIN_PATH="$fake" WATCH_ONCE=1 bash "$ROOT/watch.sh"
 assert_cmd "grep -q 'p2.*clear-token cache' \"$reports\"" 'closed pane is cleared'
+
+# A missing native session ID must survive empty TSV fields and keep polling
+# before the first token_count arrives, rather than waiting for a focus event.
+recovery_process="$TMP/recovery-process.json"
+recovery_reports="$TMP/recovery-reports"
+recovery_wakes="$TMP/recovery-wakes"
+recovery_roll="$CODEX_SESSIONS_DIR/2026/09/06/rollout-recovery.jsonl"
+printf '%s\n' '{"result":{"process_info":{"foreground_processes":[{"name":"codex","argv":["codex","resume","recovery"],"pid":1}]}}}' >"$recovery_process"
+printf '%s\n' '{"result":{"panes":[{"pane_id":"pRecovery","agent":"codex","cwd":"/same","agent_session":null}]}}' >"$panes"
+printf '%s\n' '{"type":"session_meta","payload":{"id":"recovery","model_provider":"openai"}}' >"$recovery_roll"
+FAKE_PANES="$panes" FAKE_PROCESS_INFO="$recovery_process" FAKE_REPORTS="$recovery_reports" FAKE_WAKE_FILE="$recovery_wakes" HERDR_BIN_PATH="$fake" HERDR_NO_TIMER='' bash -c \
+  'source "$1/watch.sh"; schedule_wake() { printf "%s\n" "$1" >"$FAKE_WAKE_FILE"; }; cancel_timer() { printf "cancel\n" >"$FAKE_WAKE_FILE"; }; watch_main' _ "$ROOT"
+assert_eq "$(cat "$recovery_wakes")" 15 'Codex pane with no usage schedules a 15-second refresh'
+recovery_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+printf '%s\n' "{\"type\":\"event_msg\",\"timestamp\":\"$recovery_ts\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":1000,\"cached_input_tokens\":400}}}}" >>"$recovery_roll"
+FAKE_PANES="$panes" FAKE_PROCESS_INFO="$recovery_process" FAKE_REPORTS="$recovery_reports" HERDR_BIN_PATH="$fake" bash "$ROOT/watch.sh"
+assert_cmd "grep -q 'pRecovery.*cache_pct=40%' \"$recovery_reports\"" 'missing native ID publishes first token_count cache hit'
+assert_cmd "jq -e '.active.session_id == \"recovery\" and .active.read == 400' \"$(state_path pRecovery)\"" 'missing native ID watcher keeps counters attached to the resolved session'
+printf '%s\n' '{"result":{"panes":[]}}' >"$panes"
+FAKE_PANES="$panes" FAKE_REPORTS="$recovery_reports" FAKE_WAKE_FILE="$recovery_wakes" HERDR_BIN_PATH="$fake" HERDR_NO_TIMER='' bash -c \
+  'source "$1/watch.sh"; schedule_wake() { printf "%s\n" "$1" >"$FAKE_WAKE_FILE"; }; cancel_timer() { printf "cancel\n" >"$FAKE_WAKE_FILE"; }; watch_main' _ "$ROOT"
+assert_eq "$(cat "$recovery_wakes")" cancel 'closing all Codex panes cancels cold refreshes'
 
 # Configurable symbols and expiring threshold tests
 init_state

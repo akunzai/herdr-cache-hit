@@ -20,7 +20,7 @@ This guide covers full configuration, token customization, sidebar styling, and 
 
 `cache-hit` is an event-driven metadata scanner for [Herdr](https://github.com/herdrdev/herdr).
 - **No Background Daemon**: Herdr events start `watch.sh`; no persistent scanner process is required.
-- **Single Active-Cache Timer**: While at least one cache is active, one lightweight sleep process wakes at the earlier of 15 seconds or the next expiration display transition. This bounds stale state after a same-pane agent restart to 15 seconds. When all caches are cold, no periodic scan is scheduled.
+- **Single Refresh Timer**: While at least one cache is active or an enabled Codex pane is present, one lightweight sleep process wakes at the earlier of 15 seconds or the next expiration display transition. Cold Codex panes continue refreshing so their first cache hit is detected. With no active caches and no enabled Codex panes, no periodic scan is scheduled.
 - **Privacy**: Content is processed locally only as necessary to extract usage metadata and is not intentionally extracted, retained, logged, or transmitted. Only token usage counters, session identifiers, model names, and provider identifiers are tracked.
 
 ---
@@ -171,10 +171,34 @@ The active mode is saved in `sort_mode.json` and automatically restored whenever
 
 | Agent | Extraction Method | Required Helper / Dependencies |
 | :--- | :--- | :--- |
-| **Codex CLI** | Rollout inspection from `~/.codex/sessions` | None (pure `bash` + `jq`) |
+| **Codex CLI** | Rollout inspection from `${CODEX_HOME:-~/.codex}/sessions` | `bash` + `jq`; `python3` 3.6+ for missing-session recovery |
 | **Claude Code** | Project transcript analysis (`~/.claude/projects/`) | None (pure `bash` + `jq`) |
 | **OpenCode** | SQLite database (`~/.local/share/opencode/opencode.db`) | `python3` |
 | **AGY / Antigravity CLI** | Multi-tier fallback (Statusline → Go helper → Transcript) | Optional Go helper (`agy-usage-*`) or statusline hook |
+
+### Codex Session Recovery
+
+The adapter supports both `token_usage_record.payload.usage` and
+`event_msg.payload.info.last_token_usage` (`token_count`). It uses per-request
+cache counts, ignores quota-only events, and reads model/provider metadata from
+the preceding turn context and session metadata. `CODEX_SESSIONS_DIR` takes
+precedence over `HODEX_SESSIONS_DIR`, then `CODEX_HOME`.
+
+When Herdr has no native Codex session ID, the optional Python helper inspects
+`pane process-info`. An explicit `codex resume <id>` selects that session.
+Otherwise, a unique root rollout matching the process launch time and exact
+directory is selected. When several roots are active, cumulative input/output
+counters in the pane's terminal title can identify a unique matching rollout.
+These totals are used only for session identification, never for the cache-hit
+percentage. Interactive resume can fall back to a unique root with usage since
+process launch in that directory only when no other Codex pane shares it; an
+empty bootstrap thread is excluded when a resumed thread has real usage. Subagents and sessions
+already assigned to other panes are excluded. Ambiguous matches leave the cache
+blank rather than display another session's counters. This publishes only cache
+metadata; it does not change Herdr's native session identity.
+
+The fallback was informed by [herdr-agent-usage](https://github.com/senna-lang/herdr-agent-usage)'s
+Codex adapter, with additional guards for same-directory panes and subagents.
 
 ### AGY / Antigravity CLI Architecture
 

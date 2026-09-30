@@ -18,7 +18,7 @@ Supports **Codex CLI**, **AGY** ([Antigravity CLI](docs/AGY_INTEGRATION.md)), **
 - **Live Prompt-Cache HUD**: Real-time cache hit ratios, read/cached token metrics, and estimated expiration countdowns directly in Herdr's sidebar.
 - **Urgency Transitions**: Automatic visual transitions from healthy state (`~15:44`) to urgent alarm warning (`⏰~𝟭𝟱:𝟰𝟰`) using mathematical Unicode bold digits when nearing expiration (configurable threshold, default ≤5m).
 - **Declarative Agent Sorting**: Sort active agent panes by prompt-cache expiration deadline (`cache_deadline asc`), keeping expiring agents at the top. Toggle effortlessly with a single keybinding (`prefix+s`).
-- **Bounded Active Rescans**: Event hooks update immediately. While any pane has an active cache, one lightweight wake timer rescans at most every 15 seconds (or sooner for an expiration transition); cold installations schedule no periodic work. A rapid same-pane agent restart can therefore show stale cache state for no more than 15 seconds.
+- **Bounded Rescans**: Event hooks update immediately. While any cache is active or an enabled Codex pane is present, one lightweight wake timer rescans every 15 seconds (or sooner for an expiration transition). Codex's first cache hit can appear even when the pane started with no cache or native session ID.
 - **Privacy-First**: Content is processed locally only as necessary to extract usage metadata and is not intentionally extracted, retained, logged, or transmitted.
 
 ---
@@ -29,7 +29,7 @@ Supports **Codex CLI**, **AGY** ([Antigravity CLI](docs/AGY_INTEGRATION.md)), **
 - **Dependencies**:
   - `jq` (**Required**): Core JSON parser for state and token metadata (`brew install jq` or `sudo apt install jq`).
   - `bash` (**Required**): Standard on Linux (4.0+) and macOS (native bash 3.2 works; Homebrew bash 4.0+ is also supported).
-  - `python3` (**Optional**): Only needed if monitoring **OpenCode** (queries its SQLite database) or using `herdr-cache-view toggle` for view sorting. Not needed for Codex or Claude Code.
+  - `python3` 3.6+ (**Optional**): Needed for **OpenCode**, view sorting, and Codex session recovery when Herdr has no native session ID. Codex panes with a native session ID and Claude Code need only Bash and jq.
   - `Go` 1.24+ (**Optional**): Only needed if building the AGY SQLite helper from source instead of downloading the precompiled release binary.
 
 ---

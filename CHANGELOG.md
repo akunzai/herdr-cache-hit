@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- Recover Codex cache metadata when Herdr has no native session ID, using foreground process information with guards against same-directory panes, subagents, and ambiguous roots.
+- Read Codex `event_msg/token_count` per-request usage alongside `token_usage_record`, and recover model/provider metadata from the rollout.
+- Respect `CODEX_HOME` and preserve empty snapshot columns when parsing pane records.
+- Refresh cold Codex panes every 15 seconds so the first cache hit appears without a focus change.
+
 ## [0.1.4] - 2026-09-11
 ### Fixed
 - **Claude Streaming Parser Optimization**: Replaced `tail -n 500 | jq -R -s` with an $O(1)$ streaming reverse reader (`rev_lines | jq -Rrn 'first(inputs | fromjson? ...)'`) to prevent multi-second parser bottlenecks on large JSONL transcripts and networked filesystems (such as HPC Lustre/VAST).
