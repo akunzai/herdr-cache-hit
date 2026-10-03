@@ -758,6 +758,8 @@ assert_eq "$(cat "$warm_state/codex-warm-count-warm-session-1")" 1 'Codex warmer
 assert_cmd "[[ -e \"$warm_state/codex-warm-marker-warm-session-1\" ]]" 'Codex warmer marks observations affected by synthetic turns'
 printf '{"codex":{"cache_warmer_sessions":["warm-session-1"],"cache_warmer_max_per_session":0}}\n' >"$warm_config/config.json"
 printf '2\n' >"$warm_state/codex-warm-count-warm-session-1"
+jq '.active.hit_at += 1 | .active.deadline += 1' "$warm_state/state-pWarm.json" >"$warm_state/state-pWarm.next"
+mv "$warm_state/state-pWarm.next" "$warm_state/state-pWarm.json"
 FAKE_PROMPT_LOG="$warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
 assert_eq "$(cat "$warm_state/codex-warm-count-warm-session-1")" 3 'unlimited Codex warming continues beyond the former two-attempt cap'
 warm_observation_marker=$(codex_warm_marker_path warmer-observation-test)
@@ -768,20 +770,35 @@ assert_cmd "[[ ! -e \"$warm_observation_marker\" ]]" 'warmer observation marker 
 
 agy_warm_state="$TMP/agy-warm-state"
 agy_warm_config="$TMP/agy-warm-config"
+agy_warm_home="$TMP/agy-warm-home"
 agy_warm_log="$TMP/agy-warm-prompts"
-mkdir -p "$agy_warm_state" "$agy_warm_config"
+mkdir -p "$agy_warm_state" "$agy_warm_config" "$agy_warm_home/antigravity-cli/brain/agy-warm-session/.system_generated/logs"
+: >"$agy_warm_home/antigravity-cli/brain/agy-warm-session/.system_generated/logs/transcript.jsonl"
 agy_warm_deadline=$(( $(date +%s) + 120 ))
 printf '{"active":{"agent":"agy","session_id":"agy-warm-session","model":"gemini-test","provider":"google","signature":"sig","hit_at":%s,"deadline":%s},"last_known":null,"observations":[]}\n' "$((agy_warm_deadline - 1800))" "$agy_warm_deadline" >"$agy_warm_state/state-pWarm.json"
 printf '{"agy":{"cache_warmer_sessions":["agy-warm-session"],"cache_warmer_margin_seconds":300,"cache_warmer_max_per_session":2}}\n' >"$agy_warm_config/config.json"
-FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_STATUS=working FAKE_PROMPT_LOG="$agy_warm_log" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_STATUS=working FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
 assert_cmd "[[ ! -s \"$agy_warm_log\" ]]" 'AGY warmer skips a working parent session'
-FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_FOCUSED=true FAKE_PROMPT_LOG="$agy_warm_log" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_FOCUSED=true FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
 assert_cmd "[[ ! -s \"$agy_warm_log\" ]]" 'AGY warmer skips a focused pane'
-FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LINE=$'>\n> typed user message' FAKE_PROMPT_LOG="$agy_warm_log" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LINE=$'>\n> typed user message' FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
 assert_cmd "[[ ! -s \"$agy_warm_log\" ]]" 'AGY warmer skips a nonempty prompt editor'
-FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LOG="$agy_warm_log" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
 assert_cmd "[[ \$(wc -l <\"$agy_warm_log\") -eq 1 ]]" 'AGY warmer submits on the standalone empty prompt line'
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$agy_warm_log\") -eq 1 ]]" 'AGY warmer does not repeat within one unchanged cache window'
 assert_eq "$(cat "$agy_warm_state/agy-warm-count-agy-warm-session")" 1 'AGY warmer records its per-session attempt count'
+agy_task_root="$TMP/agy-task-home"
+agy_task_transcript="$agy_task_root/antigravity-cli/brain/agy-task-session/.system_generated/logs/transcript.jsonl"
+mkdir -p "$(dirname "$agy_task_transcript")"
+printf '{"type":"GENERIC","content":"Task: agy-task-session/task-1\\nStatus: RUNNING"}\n' >"$agy_task_transcript"
+agy_task_deadline=$(( $(date +%s) + 120 ))
+printf '{"active":{"agent":"agy","session_id":"agy-task-session","model":"gemini-test","provider":"google","signature":"sig","hit_at":%s,"deadline":%s},"last_known":null,"observations":[]}\n' "$((agy_task_deadline - 1800))" "$agy_task_deadline" >"$agy_warm_state/state-pTask.json"
+printf '{"agy":{"cache_warmer_sessions":["agy-task-session"],"cache_warmer_margin_seconds":300}}\n' >"$agy_warm_config/config.json"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-task-session FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_task_root" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pTask agy-task-session' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$agy_warm_log\") -eq 1 ]]" 'AGY warmer skips a pane with a running background task despite idle status'
+printf '%s\n' '{"type":"SYSTEM_MESSAGE","content":"Task id \"agy-task-session/task-1\" finished with result"}' >>"$agy_task_transcript"
+assert_cmd "AGY_HOME='$agy_task_root' bash -c 'source \"$ROOT/lib/agy.sh\"; ! agy_has_running_background_task agy-task-session'" 'AGY transcript guard releases the session after the background task finishes'
 agy_warm_marker=$(warm_marker_path agy agy-observation-test)
 : >"$agy_warm_marker"
 record_warmed_observation agy agy-observation-test agy-provider agy-model 900 1800

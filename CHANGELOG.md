@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.11] - 2026-10-03
+- Prevent duplicate warmer prompts within the same unchanged cache window.
+- Skip AGY warming while its transcript shows an unfinished delegated background task, even when Herdr reports the foreground turn as done.
+
 ## [Unreleased]
 
 ## [0.1.10] - 2026-10-03

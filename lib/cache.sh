@@ -407,11 +407,22 @@ maybe_warm_agent() {
   (( remaining <= margin )) || return 0
   warmer_enabled_for_session "$agent" "$session_id" || return 0
 
+  # Herdr's AGY state can say done while an AGY-managed background task is
+  # still running. The transcript provides the task lifecycle signal.
+  if [[ "$agent" == agy ]]; then
+    agy_has_running_background_task "$session_id"
+    [[ $? -eq 0 ]] && return 0
+  fi
+
   max_count=$(config_int "$agent" cache_warmer_max_per_session 0)
   (( max_count == 0 || (max_count >= 1 && max_count <= 3) )) || max_count=0
-  local count_path marker_path
+  local count_path marker_path epoch_path epoch hit_at
   count_path=$(warm_count_path "$agent" "$session_id")
   marker_path=$(warm_marker_path "$agent" "$session_id")
+  epoch_path=$(warm_epoch_path "$agent" "$session_id")
+  hit_at=$(jq -r '.active.hit_at // 0' "$state" 2>/dev/null)
+  epoch="$hit_at:$deadline"
+  [[ "$(cat "$epoch_path" 2>/dev/null)" != "$epoch" ]] || return 0
   count=$(cat "$count_path" 2>/dev/null || printf 0)
   [[ "$count" =~ ^[0-9]+$ ]] || count=0
   (( max_count == 0 || count < max_count )) || return 0
@@ -440,6 +451,8 @@ maybe_warm_agent() {
   printf '%s\n' "$((count + 1))" >"$count_path.tmp" || return 0
   atomic_install "$count_path.tmp" "$count_path" || return 0
   : >"$marker_path" || return 0
+  printf '%s\n' "$epoch" >"$epoch_path.tmp" || return 0
+  atomic_install "$epoch_path.tmp" "$epoch_path" || return 0
   local prompt='Cache warm check only: do not use tools or inspect or change anything. Reply with exactly: cache warm.'
   "$HERDR_BIN" agent prompt "$pane" "$prompt" --wait --timeout 120000 >/dev/null 2>&1 || true
 }

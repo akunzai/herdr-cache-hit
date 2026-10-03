@@ -12,6 +12,27 @@ agy_transcript_path() {
   return 1
 }
 
+# AGY can report its foreground turn as done while a delegated background task
+# is still running. The transcript records RUNNING checks and a later system
+# message when each task finishes; keep the warmer out until those match.
+agy_has_running_background_task() {
+  local session_id=$1 transcript_path
+  transcript_path=$(agy_transcript_path "$session_id") || return 1
+  local result
+  result=$(jq -s '
+    ([ .[] | (.content // "") | split("\n") as $lines |
+      range(0; ($lines | length)) as $i |
+      select($lines[$i] | startswith("Task: ")) |
+      select($lines[$i + 1] == "Status: RUNNING") |
+      $lines[$i][6:]
+    ]) as $running |
+    ([ .[] | (.content // "") | split("Task id \"") | .[1] // empty | split("\" finished") | .[0] ]) as $finished |
+    (($running - $finished) | length) > 0
+  ' "$transcript_path" 2>/dev/null) || return 1
+  [[ "$result" == true ]] && return 0
+  return 1
+}
+
 agy_usage_helper() {
   local os arch name plugin_dir
   plugin_dir=${PLUGIN_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}

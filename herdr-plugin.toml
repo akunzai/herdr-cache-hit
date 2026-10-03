@@ -1,6 +1,6 @@
 id = "cache-hit"
 name = "Cache Hit"
-version = "0.1.10"
+version = "0.1.11"
 min_herdr_version = "0.9.0"
 description = "Report prompt-cache usage for Herdr Codex, AGY, Claude, and OpenCode panes"
 platforms = ["macos", "linux"]

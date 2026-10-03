@@ -27,6 +27,10 @@ warm_marker_path() {
   local agent=$1 session_id=$2
   if [[ "$agent" == codex ]]; then codex_warm_marker_path "$session_id"; else printf '%s/%s-warm-marker-%s\n' "$STATE_DIR" "$agent" "${session_id//[^A-Za-z0-9_.-]/_}"; fi
 }
+warm_epoch_path() {
+  local agent=$1 session_id=$2
+  printf '%s/%s-warm-epoch-%s\n' "$STATE_DIR" "$agent" "${session_id//[^A-Za-z0-9_.-]/_}"
+}
 state_path() { printf '%s/state-%s.json\n' "$STATE_DIR" "${1//[^A-Za-z0-9_.-]/_}"; }
 warmer_enabled_for_session() {
   local agent=$1 session_id=$2
