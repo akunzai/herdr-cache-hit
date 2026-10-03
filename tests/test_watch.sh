@@ -874,6 +874,7 @@ warm_notification_log="$TMP/warm-notifications"
 FAKE_NOTIFICATION_LOG="$warm_notification_log" HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" toggle >/dev/null
 assert_cmd "jq -e '.codex.cache_warmer_sessions == [\"toggle-session\"] and .bold_time == false' '$warm_toggle_config/config.json' >/dev/null" 'warmer toggle arms focused Codex session and preserves other config'
 assert_cmd "grep -Fq 'notification show Cache warming enabled --body codex session will be warmed near its cache deadline. --sound none' '$warm_notification_log'" 'per-session warmer toggle shows a quiet Herdr notification'
+
 HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" toggle >/dev/null
 assert_cmd "jq -e '.codex.cache_warmer_sessions == []' '$warm_toggle_config/config.json' >/dev/null" 'warmer toggle disarms focused Codex session'
 FAKE_TOGGLE_AGENT=agy HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" toggle >/dev/null
@@ -891,6 +892,30 @@ FAKE_TOGGLE_AGENT=agy HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$war
 assert_cmd "HERDR_PLUGIN_CONFIG_DIR='$warm_toggle_config' bash -c 'source \"$ROOT/lib/core.sh\"; warmer_enabled_for_session agy toggle-session'" 'per-session toggle restores a session during global mode'
 HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" bash "$ROOT/bin/herdr-cache-warm" global-toggle >/dev/null
 assert_cmd "jq -e '.cache_warmer_global_enabled == false and .agy.cache_warmer_sessions == [] and .codex.cache_warmer_sessions == [\"toggle-session\"]' '$warm_toggle_config/config.json' >/dev/null" 'global warmer toggle returns to saved per-session settings'
+
+# A command-palette invocation focuses its own overlay. Resolve a unique agent
+# session from the overlay's workspace context, and refuse ambiguous workspaces.
+warm_context_fake="$TMP/fake-herdr-warm-context"
+cat >"$warm_context_fake" <<'SH'
+#!/usr/bin/env bash
+if [[ "$1 $2" == "api snapshot" ]]; then
+  cat "$FAKE_CONTEXT_SNAPSHOT"
+elif [[ "$1 $2" == "notification show" ]]; then
+  printf '%s\n' "$*" >>"$FAKE_NOTIFICATION_LOG"
+fi
+SH
+chmod +x "$warm_context_fake"
+warm_context_snapshot="$TMP/warm-context-snapshot.json"
+printf '{"result":{"snapshot":{"panes":[{"pane_id":"pPalette","workspace_id":"wClaude","agent":null},{"pane_id":"pClaude","workspace_id":"wClaude","agent":"claude","agent_session":{"kind":"id","value":"palette-claude-session"}}]}}}\n' >"$warm_context_snapshot"
+printf '{"bold_time":false}\n' >"$warm_toggle_config/config.json"
+FAKE_CONTEXT_SNAPSHOT="$warm_context_snapshot" FAKE_NOTIFICATION_LOG="$warm_notification_log" HERDR_PLUGIN_CONTEXT_JSON='{"workspace_id":"wClaude","focused_pane_id":"pPalette"}' HERDR_WORKSPACE_ID=wClaude HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_context_fake" bash "$ROOT/bin/herdr-cache-warm" toggle-context >/dev/null
+assert_cmd "jq -e '.claude.cache_warmer_sessions == [\"palette-claude-session\"]' '$warm_toggle_config/config.json' >/dev/null" 'command-palette session action targets the unique agent in its workspace'
+printf '{"result":{"snapshot":{"panes":[{"pane_id":"pPalette","workspace_id":"wClaude","agent":null},{"pane_id":"pClaude","workspace_id":"wClaude","agent":"claude","agent_session":{"kind":"id","value":"palette-claude-session"}},{"pane_id":"pCodex","workspace_id":"wClaude","agent":"codex","agent_session":{"kind":"id","value":"palette-codex-session"}}]}}}\n' >"$warm_context_snapshot"
+if FAKE_CONTEXT_SNAPSHOT="$warm_context_snapshot" HERDR_PLUGIN_CONTEXT_JSON='{"workspace_id":"wClaude","focused_pane_id":"pPalette"}' HERDR_WORKSPACE_ID=wClaude HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_context_fake" bash "$ROOT/bin/herdr-cache-warm" toggle-context >/dev/null 2>&1; then
+  not_ok 'command-palette session action refuses an ambiguous workspace target'
+else
+  ok 'command-palette session action refuses an ambiguous workspace target'
+fi
 printf '{"codex":{"cache_warmer_sessions":["armed-session"],"cache_warmer_max_per_session":2}}\n' >"$warm_toggle_config/config.json"
 printf '{"active":{"session_id":"armed-session"}}\n' >"$warm_toggle_state/state-pArmed.json"
 warm_display_log="$TMP/warm-display-report"

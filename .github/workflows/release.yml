@@ -57,10 +57,11 @@ jobs:
         run: |
           bash -n watch.sh
           bash -n bin/herdr-cache-view
+          bash -n bin/herdr-cache-warm
           for f in lib/*.sh scripts/*.sh; do
             bash -n "$f"
           done
-          shellcheck watch.sh lib/*.sh bin/herdr-cache-view scripts/*.sh
+          shellcheck -x watch.sh lib/*.sh bin/herdr-cache-view bin/herdr-cache-warm scripts/*.sh
           go test -v ./cmd/agy-usage/...
           bash tests/test_watch.sh
 

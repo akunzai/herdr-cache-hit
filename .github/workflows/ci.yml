@@ -49,13 +49,14 @@ jobs:
         run: |
           bash -n watch.sh
           bash -n bin/herdr-cache-view
+          bash -n bin/herdr-cache-warm
           for f in lib/*.sh scripts/*.sh; do
             bash -n "$f"
           done
 
       - name: Run shellcheck
         run: |
-          shellcheck watch.sh lib/*.sh bin/herdr-cache-view scripts/*.sh
+          shellcheck -x watch.sh lib/*.sh bin/herdr-cache-view bin/herdr-cache-warm scripts/*.sh
 
       - name: Run Go tests & build
         run: |

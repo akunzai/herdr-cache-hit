@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.15] - 2026-10-03
+- Add per-session and global cache-warmer actions to Herdr's plugin action list and command palette.
+- Resolve the command-palette session target from the active workspace only when exactly one identified agent session is present.
+
 ## [0.1.14] - 2026-10-03
 - Route active Claude panes through the cache warmer. Fix ShellCheck and watcher-test failures that had been blocking CI.
 

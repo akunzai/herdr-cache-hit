@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
-# shellcheck source=../lib/core.sh
+# shellcheck source=lib/core.sh
 . "$ROOT/lib/core.sh"
 
 show_toggle_notification() {
@@ -13,7 +13,7 @@ toggle() {
   init_state
   mkdir -p "$CONFIG_DIR"
   local pane agent session_id identity tmp enabled
-  pane=${HERDR_ACTIVE_PANE_ID:-}
+  pane=${1:-${HERDR_ACTIVE_PANE_ID:-}}
   [[ -n "$pane" ]] || { echo 'Cache warmer toggle needs a focused Herdr pane' >&2; exit 1; }
   identity=$("$HERDR_BIN" api snapshot 2>/dev/null | jq -r --arg pane "$pane" '
     [.result.snapshot.panes[]? | select(.pane_id == $pane and (.agent == "codex" or .agent == "agy" or .agent == "claude") and .agent_session.kind == "id" and (.agent_session.value | type == "string" and length > 0))] as $p |
@@ -65,6 +65,38 @@ toggle() {
   HERDR_NO_TIMER=1 "$ROOT/watch.sh" >/dev/null 2>&1 || true
 }
 
+toggle_context() {
+  local context pane agent workspace snapshot candidates count target
+  context=${HERDR_PLUGIN_CONTEXT_JSON:-}
+  pane=$(printf '%s' "$context" | jq -r '.focused_pane_id // empty' 2>/dev/null || true)
+  agent=$(printf '%s' "$context" | jq -r '.focused_pane_agent // empty' 2>/dev/null || true)
+  if [[ "$agent" == codex || "$agent" == agy || "$agent" == claude ]]; then
+    toggle "$pane"
+    return
+  fi
+
+  # In Herdr's command palette the focused pane is the palette overlay. Resolve
+  # the target from its workspace only when exactly one identified agent pane
+  # exists; never guess when a workspace contains several agent sessions.
+  workspace=${HERDR_WORKSPACE_ID:-$(printf '%s' "$context" | jq -r '.workspace_id // empty' 2>/dev/null || true)}
+  [[ -n "$workspace" ]] || { echo 'Cache warmer action needs an active workspace' >&2; exit 1; }
+  snapshot=$("$HERDR_BIN" api snapshot 2>/dev/null) || { echo 'Could not read the Herdr workspace snapshot' >&2; exit 1; }
+  candidates=$(printf '%s' "$snapshot" | jq -r --arg workspace "$workspace" --arg exclude "$pane" '
+    [.result.snapshot.panes[]? |
+      select(.workspace_id == $workspace and .pane_id != $exclude and
+        (.agent == "codex" or .agent == "agy" or .agent == "claude") and
+        .agent_session.kind == "id" and (.agent_session.value | type == "string" and length > 0)) |
+      [.pane_id, .agent] | @tsv] | .[]
+  ' 2>/dev/null) || { echo 'Could not identify agent sessions in this workspace' >&2; exit 1; }
+  count=$(printf '%s\n' "$candidates" | awk 'NF { n++ } END { print n + 0 }')
+  if [[ "$count" -ne 1 ]]; then
+    echo "Expected one identified Codex, AGY, or Claude session in this workspace; found $count. Use prefix+u while focused on the intended pane." >&2
+    exit 1
+  fi
+  IFS=$'\t' read -r target _ <<<"$candidates"
+  toggle "$target"
+}
+
 toggle_global() {
   init_state
   mkdir -p "$CONFIG_DIR"
@@ -93,6 +125,7 @@ toggle_global() {
 
 case "${1:-toggle}" in
   toggle) toggle ;;
+  toggle-context) toggle_context ;;
   global-toggle) toggle_global ;;
-  *) echo 'Usage: herdr-cache-warm [toggle|global-toggle]' >&2; exit 2 ;;
+  *) echo 'Usage: herdr-cache-warm [toggle|toggle-context|global-toggle]' >&2; exit 2 ;;
 esac
