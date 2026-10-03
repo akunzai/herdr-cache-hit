@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.1.16] - 2026-10-03
+- Clarify the command-palette distinction between per-agent settings and global mode; remove the default global-warming shortcut from Mac and GWDG configs.
+
 ## [0.1.15] - 2026-10-03
 - Add per-session and global cache-warmer actions to Herdr's plugin action list and command palette.
 - Resolve the command-palette session target from the active workspace only when exactly one identified agent session is present.

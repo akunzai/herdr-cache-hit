@@ -1,21 +1,21 @@
 id = "cache-hit"
 name = "Cache Hit"
-version = "0.1.15"
+version = "0.1.16"
 min_herdr_version = "0.9.0"
 description = "Report prompt-cache usage for Herdr Codex, AGY, Claude, and OpenCode panes"
 platforms = ["macos", "linux"]
 
 [[actions]]
 id = "warmer-toggle-session"
-title = "Toggle cache warming for this workspace agent"
-description = "Toggle cache warming for the identified Codex, AGY, or Claude session in this workspace. Refuses if multiple sessions make the target ambiguous."
+title = "Toggle per-agent cache warming"
+description = "Toggle the individual setting for the identified Codex, AGY, or Claude session in this workspace. Refuses if multiple sessions make the target ambiguous."
 contexts = ["pane", "workspace"]
 command = ["bash", "bin/herdr-cache-warm", "toggle-context"]
 
 [[actions]]
 id = "warmer-toggle-global"
-title = "Toggle cache warming globally"
-description = "Toggle automatic cache warming globally for Codex, AGY, and Claude sessions."
+title = "Switch between global and per-agent warming"
+description = "Global ON warms all supported sessions. Switching it OFF returns to individual per-agent settings; it does not turn those settings off."
 contexts = ["global", "workspace", "pane"]
 command = ["bash", "bin/herdr-cache-warm", "global-toggle"]
 
