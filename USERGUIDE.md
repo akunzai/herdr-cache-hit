@@ -77,6 +77,13 @@ Supported agent keys: `agy` (Antigravity CLI), `claude` (Claude Code), `codex` (
 | `show_model` | boolean | `false` | Include model name in the token string. |
 | `ttl_ceiling` | integer | `3600` | Hard upper bound in seconds on learned prompt-cache survival time. |
 
+For Codex, the countdown starts from a 30-minute baseline, matching OpenAI's
+current documented default. The plugin shortens that estimate only after at
+least three recorded survival observations below 30 minutes for the same provider
+and model. Longer observations do not extend the Codex countdown. The countdown
+is still an estimate: cache misses can also result from a changed prompt prefix
+or routing, so it is not a guarantee of cache eviction time.
+
 ---
 
 ## Token Reference

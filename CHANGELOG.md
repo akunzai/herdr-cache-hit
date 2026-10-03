@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.8] - 2026-10-03
+### Changed
+- Use a 30-minute baseline for Codex cache countdowns; only shorten it after at least three lower survival observations for the same provider/model, and do not extend it from longer observations.
+- Rebase persisted active Codex countdowns to the new policy while preserving the original cache-hit time.
+
 ## [0.1.7] - 2026-09-30
 ### Fixed
 - Recover explicitly resumed Codex sessions when `--no-daemon` appears before the `resume` subcommand.

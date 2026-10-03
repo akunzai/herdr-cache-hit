@@ -26,20 +26,24 @@ model_key() {
   printf '%s:%s' "$provider" "$model"
 }
 get_learned_ttl() {
-  local provider=$1 model=$2 floor=$3 ceiling=${4:-$CEILING_SECONDS} key ttl
+  local provider=$1 model=$2 floor=$3 ceiling=${4:-$CEILING_SECONDS} allow_below_floor=${5:-false} key ttl
   key=$(model_key "$provider" "$model")
   [[ -s "$OBSERVATIONS_FILE" ]] || { printf '%s\n' "$floor"; return 0; }
-  ttl=$(jq -r --arg key "$key" --argjson floor "$floor" --argjson ceiling "$ceiling" '
+  ttl=$(jq -r \
+    --arg key "$key" \
+    --argjson floor "$floor" \
+    --argjson ceiling "$ceiling" \
+    --argjson allow_below_floor "$allow_below_floor" '
     (.[$key] // []) as $raw |
     ($raw | map(select(type == "number" and . >= 60 and . <= $ceiling))) as $obs |
-    if ($obs | length) >= 2 then
+    if ($obs | length) >= (if $allow_below_floor then 3 else 2 end) then
       ($obs | sort) as $s |
       (if ($s | length) >= 5 then
         (($s | length) * 0.1 | floor) as $trim |
         $s[$trim : (($s | length) - $trim)]
        else $s end) as $inliers |
       (($inliers | add) / ($inliers | length) | floor) as $avg |
-      [$floor, $avg] | max | [., $ceiling] | min
+      (if $allow_below_floor then [$floor, $avg] | min else [$floor, $avg] | max end) | [., $ceiling] | min
     else
       $floor
     end' "$OBSERVATIONS_FILE" 2>/dev/null) || ttl="$floor"
@@ -204,7 +208,14 @@ update_pane() {
             record_observation "$provider" "$model" "$delta" "$ttl_max"
           fi
         fi
-        local ttl; ttl=$(get_learned_ttl "$provider" "$model" "$ttl_floor" "$ttl_max")
+        local ttl
+        if [[ "$agent" == codex ]]; then
+          # Use the documented 30m baseline. Only shorten it after at least three
+          # recorded survival observations below 30m; longer intervals never extend it.
+          ttl=$(get_learned_ttl "$provider" "$model" "$ttl_floor" "$ttl_max" true)
+        else
+          ttl=$(get_learned_ttl "$provider" "$model" "$ttl_floor" "$ttl_max")
+        fi
         local new_deadline=$((record_epoch + ttl))
         jq --arg sig "$signature" --arg agent "$agent" --arg sid "$session_id" --arg model "$model" --arg provider "$provider" \
           --argjson at "$record_epoch" --argjson deadline "$new_deadline" \
@@ -214,8 +225,19 @@ update_pane() {
           .last_known = {agent:$agent, session_id:$sid, model:$model, provider:$provider, input:$input, read:$read, write:$write, write5m:$write5m, write1h:$write1h}
         ' "$state" >"$state.tmp" 2>/dev/null && atomic_install "$state.tmp" "$state"
       fi
+  fi
+  # Rebase existing Codex state after a policy change without extending the
+  # cache lifetime: keep the original hit time and apply the new model estimate.
+  if [[ "$agent" == codex && -n "$record" && "$prev_active" == true && "$prev_sid" == "$session_id" && "$prev_sig" == "$signature" ]]; then
+    local codex_ttl prev_ttl rebased_deadline
+    codex_ttl=$(get_learned_ttl "$provider" "$model" "$ttl_floor" "$ttl_max" true)
+    prev_ttl=$((prev_deadline - prev_hit_at))
+    rebased_deadline=$((prev_hit_at + codex_ttl))
+    if (( prev_ttl > codex_ttl )); then
+      jq --argjson deadline "$rebased_deadline" '.active.deadline = $deadline' "$state" >"$state.tmp" 2>/dev/null && atomic_install "$state.tmp" "$state"
     fi
-    if [[ "$agent" == agy && "$source_deadline" =~ ^[0-9]+$ && "$source_deadline" -gt 0 ]]; then
+  fi
+  if [[ "$agent" == agy && "$source_deadline" =~ ^[0-9]+$ && "$source_deadline" -gt 0 ]]; then
       jq --arg agent "$agent" --arg sid "$session_id" --argjson deadline "$source_deadline" 'if .active != null and .active.agent == $agent and .active.session_id == $sid then .active.deadline=$deadline else . end' "$state" >"$state.tmp" 2>/dev/null && atomic_install "$state.tmp" "$state"
     fi
   fi

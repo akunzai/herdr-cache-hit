@@ -148,6 +148,30 @@ record_observation p2 m2 3300
 learned=$(get_learned_ttl p2 m2 1800)
 assert_eq "$learned" 3000 'shared observations compute learned TTL across panes'
 
+# Codex uses the documented 30-minute baseline; only repeated lower observations shorten it.
+record_observation codex-test codex-model 600
+record_observation codex-test codex-model 900
+learned=$(get_learned_ttl codex-test codex-model 1800 3600 true)
+assert_eq "$learned" 1800 'two lower Codex observations keep the documented baseline'
+record_observation codex-test codex-model 1200
+learned=$(get_learned_ttl codex-test codex-model 1800 3600 true)
+assert_eq "$learned" 900 'three lower Codex observations shorten the estimate'
+record_observation codex-test codex-long 2100
+record_observation codex-test codex-long 2400
+record_observation codex-test codex-long 2700
+learned=$(get_learned_ttl codex-test codex-long 1800 3600 true)
+assert_eq "$learned" 1800 'longer Codex observations do not extend the baseline'
+
+# An upgrade rebases an existing longer Codex deadline without resetting hit time.
+rebase_now=$(date +%s)
+rebase_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+codex_usage() { printf 'codex\tsRebase\t%s\t1000\t800\t0\t0\t0\tmRebase\tpRebase\t/same\n' "$rebase_ts"; }
+rebase_sig='codex|sRebase|mRebase|pRebase|1000|800|0|0|0'
+jq -n --arg sig "$rebase_sig" --argjson now "$rebase_now" '{active:{agent:"codex",session_id:"sRebase",model:"mRebase",provider:"pRebase",signature:$sig,hit_at:$now,deadline:($now+2467),input:1000,read:800,write:0,write5m:0,write1h:0},observations:[]}' >"$(state_path paneRebase)"
+update_pane paneRebase codex sRebase
+assert_eq "$(jq -r '.active.deadline' "$(state_path paneRebase)")" "$((rebase_now + 1800))" 'upgrade rebases an old Codex estimate from its original hit time'
+unset -f codex_usage
+
 # Prefix shift guardrail: cold drop within 20s does not add to observations
 printf '%s\n' '{"type":"session_meta","payload":{"id":"aaa111"}}' '{"type":"token_usage_record","timestamp":"2026-09-06T10:47:20Z","payload":{"usage":{"input_tokens":1000,"cached_input_tokens":0},"model":"m2","model_provider":"p2"}}' >"$roll"
 update_pane paneA "$sid"
