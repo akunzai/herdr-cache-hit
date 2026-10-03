@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-state_path() { printf '%s/state-%s.json\n' "$STATE_DIR" "${1//[^A-Za-z0-9_.-]/_}"; }
 reset_pane_cache() {
   local path tmp
   path=$(state_path "$1")
@@ -66,6 +65,15 @@ record_observation() {
   fi
   rm -f "$tmp"
 }
+record_warmed_observation() {
+  local agent=$1 session_id=$2 provider=$3 model=$4 seconds=$5 max_sec=$6 marker
+  marker=$(warm_marker_path "$agent" "$session_id")
+  if [[ -e "$marker" ]]; then
+    rm -f "$marker"
+    return 0
+  fi
+  record_observation "$provider" "$model" "$seconds" "$max_sec"
+}
 update_pane() {
   local pane=$1 agent session_id cwd supplied record state now record_epoch ttl_floor
   if [[ $# -eq 2 ]]; then agent=codex; session_id=$2; cwd=""; supplied=""; else agent=$2; session_id=$3; cwd=${4:-}; supplied=${5:-}; fi
@@ -98,6 +106,9 @@ update_pane() {
       model=$(jq -r '.active.model // ""' "$state" 2>/dev/null || printf "")
       provider=$(jq -r '.active.provider // ""' "$state" 2>/dev/null || printf "")
     elif [[ "$prev_active" == "true" && "$prev_sid" == "$session_id" ]]; then
+      if [[ ("$agent" == codex || "$agent" == agy) && "$prev_deadline" =~ ^[0-9]+$ && "$prev_deadline" -le "$now" ]]; then
+        rm -f "$(warm_marker_path "$agent" "$session_id")"
+      fi
       input=$(jq -r '.active.input // 0' "$state" 2>/dev/null || printf 0)
       read=$(jq -r '.active.read // 0' "$state" 2>/dev/null || printf 0)
       write=$(jq -r '.active.write // 0' "$state" 2>/dev/null || printf 0)
@@ -168,7 +179,7 @@ update_pane() {
         if [[ "$prev_active" == "true" && "$prev_sid" == "$session_id" && "$prev_hit_at" =~ ^[0-9]+$ && "$prev_hit_at" -gt 0 ]]; then
           local delta=$((record_epoch - prev_hit_at))
           if (( delta >= 60 && delta <= ttl_max )); then
-            record_observation "$provider" "$model" "$delta" "$ttl_max"
+            record_warmed_observation "$agent" "$session_id" "$provider" "$model" "$delta" "$ttl_max"
           fi
         fi
         if [[ "$prev_active" == "true" && "$prev_sid" == "$session_id" ]]; then
@@ -205,7 +216,7 @@ update_pane() {
           local delta=$((record_epoch - prev_hit_at))
           local prev_ttl=$((prev_deadline - prev_hit_at))
           if (( delta > prev_ttl && delta >= 60 && delta <= ttl_max )); then
-            record_observation "$provider" "$model" "$delta" "$ttl_max"
+            record_warmed_observation "$agent" "$session_id" "$provider" "$model" "$delta" "$ttl_max"
           fi
         fi
         local ttl
@@ -378,3 +389,59 @@ update_pane() {
     report_pane "$pane" "$agent" "$full_text" "$ttl_ms" "$status_text" "$pct_text" "$tokens_text" "$state_name" "$details_text" "$active_deadline" "$active_remaining" "$active_pct_num" || true
   fi
 }
+maybe_warm_agent() {
+  local agent=$1 pane=$2 session_id=$3 state deadline now remaining margin max_count count
+  [[ "$agent" == codex || "$agent" == agy ]] || return 0
+  [[ "$session_id" =~ ^[A-Za-z0-9._-]+$ ]] || return 0
+
+  state=$(state_path "$pane")
+  [[ -s "$state" ]] || return 0
+  [[ "$(jq -r '.active.session_id // ""' "$state" 2>/dev/null)" == "$session_id" ]] || return 0
+  deadline=$(jq -r '.active.deadline // 0' "$state" 2>/dev/null) || return 0
+  [[ "$deadline" =~ ^[0-9]+$ && "$deadline" -gt 0 ]] || return 0
+  now=${now:-$(date +%s)}
+  remaining=$((deadline - now))
+  (( remaining > 0 )) || return 0
+  margin=$(config_int "$agent" cache_warmer_margin_seconds 300)
+  (( margin >= 30 && margin <= 600 )) || margin=300
+  (( remaining <= margin )) || return 0
+  warmer_enabled_for_session "$agent" "$session_id" || return 0
+
+  max_count=$(config_int "$agent" cache_warmer_max_per_session 0)
+  (( max_count == 0 || (max_count >= 1 && max_count <= 3) )) || max_count=0
+  local count_path marker_path
+  count_path=$(warm_count_path "$agent" "$session_id")
+  marker_path=$(warm_marker_path "$agent" "$session_id")
+  count=$(cat "$count_path" 2>/dev/null || printf 0)
+  [[ "$count" =~ ^[0-9]+$ ]] || count=0
+  (( max_count == 0 || count < max_count )) || return 0
+
+  # Check current identity, idle state, and focus immediately before touching the PTY.
+  local snapshot still_safe screen last_prompt
+  snapshot=$("$HERDR_BIN" api snapshot 2>/dev/null) || return 0
+  still_safe=$(jq -r --arg pane "$pane" --arg agent "$agent" --arg sid "$session_id" '
+    [.result.snapshot.panes[]? | select(.pane_id == $pane and .agent == $agent and .agent_session.kind == "id" and .agent_session.value == $sid)] as $p |
+    if ($p | length) == 1 then (($p[0].agent_status == "idle" or $p[0].agent_status == "done") and $p[0].focused == false) else false end
+  ' <<<"$snapshot" 2>/dev/null) || return 0
+  [[ "$still_safe" == true ]] || return 0
+  screen=$("$HERDR_BIN" agent read "$pane" --source recent --lines 12 2>/dev/null) || return 0
+  case "$agent" in
+    codex)
+      last_prompt=$(printf '%s\n' "$screen" | sed -n '/›/p' | tail -n 1 | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//')
+      [[ "$last_prompt" == '› Ask Codex to do anything' ]] || return 0
+      ;;
+    agy)
+      last_prompt=$(printf '%s\n' "$screen" | sed -n -E '/^[[:space:]]*>/p' | tail -n 1 | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//')
+      [[ "$last_prompt" == '>' ]] || return 0
+      ;;
+  esac
+
+  # Mark before submission so a timeout cannot cause a duplicate queued prompt.
+  printf '%s\n' "$((count + 1))" >"$count_path.tmp" || return 0
+  atomic_install "$count_path.tmp" "$count_path" || return 0
+  : >"$marker_path" || return 0
+  local prompt='Cache warm check only: do not use tools or inspect or change anything. Reply with exactly: cache warm.'
+  "$HERDR_BIN" agent prompt "$pane" "$prompt" --wait --timeout 120000 >/dev/null 2>&1 || true
+}
+maybe_warm_codex() { maybe_warm_agent codex "$1" "$2"; }
+maybe_warm_agy() { maybe_warm_agent agy "$1" "$2"; }

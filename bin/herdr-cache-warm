@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
+# shellcheck source=../lib/core.sh
+. "$ROOT/lib/core.sh"
+
+show_toggle_notification() {
+  local title=$1 body=$2
+  "$HERDR_BIN" notification show "$title" --body "$body" --sound none >/dev/null 2>&1 || true
+}
+
+toggle() {
+  init_state
+  mkdir -p "$CONFIG_DIR"
+  local pane agent session_id identity tmp enabled
+  pane=${HERDR_ACTIVE_PANE_ID:-}
+  [[ -n "$pane" ]] || { echo 'Cache warmer toggle needs a focused Herdr pane' >&2; exit 1; }
+  identity=$("$HERDR_BIN" api snapshot 2>/dev/null | jq -r --arg pane "$pane" '
+    [.result.snapshot.panes[]? | select(.pane_id == $pane and (.agent == "codex" or .agent == "agy") and .agent_session.kind == "id" and (.agent_session.value | type == "string" and length > 0))] as $p |
+    if ($p | length) == 1 then [$p[0].agent, $p[0].agent_session.value] | @tsv else "" end
+  ') || identity=""
+  IFS=$'\t' read -r agent session_id <<<"$identity"
+  [[ -n "${session_id:-}" ]] || { echo 'Focused pane is not an identified Codex or AGY session' >&2; exit 1; }
+  local global_enabled
+  global_enabled=$(jq -r '.cache_warmer_global_enabled == true' "$CONFIG_FILE" 2>/dev/null || echo false)
+  if warmer_enabled_for_session "$agent" "$session_id"; then enabled=false; else enabled=true; fi
+  tmp="$CONFIG_FILE.tmp.$$"
+  if [[ -s "$CONFIG_FILE" ]]; then
+    if [[ "$global_enabled" == true ]]; then
+      jq --arg agent "$agent" --arg sid "$session_id" --argjson enabled "$enabled" '
+        .cache_warmer_global_excluded_sessions = (.cache_warmer_global_excluded_sessions // {}) |
+        .cache_warmer_global_excluded_sessions[$agent] = (
+          if $enabled then ((.cache_warmer_global_excluded_sessions[$agent] // []) | map(select(. != $sid)))
+          else ((.cache_warmer_global_excluded_sessions[$agent] // []) + [$sid] | unique) end
+        )
+      ' "$CONFIG_FILE" >"$tmp"
+    else
+      jq --arg agent "$agent" --arg sid "$session_id" --argjson enabled "$enabled" '
+        .[$agent] = ((.[$agent] // {}) + {cache_warmer_sessions: (
+          if $enabled then ((.[$agent].cache_warmer_sessions // []) + [$sid] | unique)
+          else (.[$agent].cache_warmer_sessions // [] | map(select(. != $sid))) end
+        )})
+      ' "$CONFIG_FILE" >"$tmp"
+    fi
+  else
+    jq -n --arg agent "$agent" --arg sid "$session_id" --argjson enabled "$enabled" '{($agent):{cache_warmer_sessions:(if $enabled then [$sid] else [] end)}}' >"$tmp"
+  fi
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$CONFIG_FILE"
+  if [[ "$enabled" == true ]]; then
+    printf '%s cache warmer: ON for this session\n' "$agent"
+    if [[ "$global_enabled" == true ]]; then
+      show_toggle_notification 'Cache warming enabled' "$agent session included in global cache warming."
+    else
+      show_toggle_notification 'Cache warming enabled' "$agent session will be warmed near its cache deadline."
+    fi
+  else
+    printf '%s cache warmer: OFF for this session\n' "$agent"
+    if [[ "$global_enabled" == true ]]; then
+      show_toggle_notification 'Cache warming excluded' "$agent session excluded from global cache warming."
+    else
+      show_toggle_notification 'Cache warming disabled' "$agent session will not be warmed."
+    fi
+  fi
+  HERDR_NO_TIMER=1 "$ROOT/watch.sh" >/dev/null 2>&1 || true
+}
+
+toggle_global() {
+  init_state
+  mkdir -p "$CONFIG_DIR"
+  local enabled tmp
+  enabled=$(jq -r '.cache_warmer_global_enabled != true' "$CONFIG_FILE" 2>/dev/null || echo true)
+  tmp="$CONFIG_FILE.tmp.$$"
+  if [[ -s "$CONFIG_FILE" ]]; then
+    jq --argjson enabled "$enabled" '
+      .cache_warmer_global_enabled = $enabled |
+      if $enabled then .cache_warmer_global_excluded_sessions = {} else . end
+    ' "$CONFIG_FILE" >"$tmp"
+  else
+    jq -n --argjson enabled "$enabled" '{cache_warmer_global_enabled:$enabled,cache_warmer_global_excluded_sessions:{}}' >"$tmp"
+  fi
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$CONFIG_FILE"
+  if [[ "$enabled" == true ]]; then
+    printf 'Cache warmer: ON globally for all Codex and AGY sessions\n'
+    show_toggle_notification 'Cache warming enabled globally' 'All Codex and AGY sessions will be warmed near their cache deadlines.'
+  else
+    printf 'Cache warmer: global mode OFF; per-session settings apply\n'
+    show_toggle_notification 'Global cache warming disabled' 'Per-session cache warming settings now apply.'
+  fi
+  HERDR_NO_TIMER=1 "$ROOT/watch.sh" >/dev/null 2>&1 || true
+}
+
+case "${1:-toggle}" in
+  toggle) toggle ;;
+  global-toggle) toggle_global ;;
+  *) echo 'Usage: herdr-cache-warm [toggle|global-toggle]' >&2; exit 2 ;;
+esac

@@ -19,7 +19,9 @@ Supports **Codex CLI**, **AGY** ([Antigravity CLI](docs/AGY_INTEGRATION.md)), **
 - **Urgency Transitions**: Automatic visual transitions from healthy state (`~15:44`) to urgent alarm warning (`⏰~𝟭𝟱:𝟰𝟰`) using mathematical Unicode bold digits when nearing expiration (configurable threshold, default ≤5m).
 - **Declarative Agent Sorting**: Sort active agent panes by prompt-cache expiration deadline (`cache_deadline asc`), keeping expiring agents at the top. Toggle effortlessly with a single keybinding (`prefix+s`).
 - **Bounded Rescans**: Event hooks update immediately. While any cache is active or an enabled Codex pane is present, one lightweight wake timer rescans every 15 seconds (or sooner for an expiration transition). Codex's first cache hit can appear even when the pane started with no cache or native session ID.
-- **Privacy-First**: Content is processed locally only as necessary to extract usage metadata and is not intentionally extracted, retained, logged, or transmitted.
+- **Experimental Codex and AGY Warmer**: An opt-in warmer can submit a short ordinary turn when a Codex or AGY pane is idle, unfocused, and showing an empty prompt. It is disabled by default and continues while opted in; a finite per-session cap is configurable.
+- **Warmer Toggle**: Toggle warming for the focused Codex or AGY session with Herdr's `prefix+u`, or globally across Codex and AGY sessions with `prefix+shift+u`; a configurable `↻` before the countdown marks an armed session.
+- **Privacy-First**: Cache telemetry is read locally. When the experimental Codex or AGY warmer is enabled, its short prompt is submitted like a normal user turn and is stored in that agent session.
 
 ---
 
@@ -76,6 +78,7 @@ rows = [
     { token = "$cache", fg = "#64748b", bold = false, dim = true, rules = [
       { starts_with = "⏰", bold = true, dim = false, fg = "#7f1d1d" },
       { starts_with = "⚠️", bold = true, dim = false, fg = "#b45309" },
+      { starts_with = "↻~", bold = false, dim = false, fg = "#713f78" },
       { starts_with = "~", bold = false, dim = false, fg = "#713f78" },
       { starts_with = "♨️", bold = false, dim = false, fg = "#713f78" }
     ] }
@@ -83,6 +86,9 @@ rows = [
   [{ token = "workspace", fg = "#4c4669", bold = false, dim = false }, { token = "tab", fg = "#4c4669", bold = false, dim = false }]
 ]
 ```
+
+If you customize `cache_warmer_symbol`, add a matching `starts_with` rule before
+the generic `~` rule to preserve the active-cache color.
 
 ### 3. Add 2-Way Expiration Sorting Keybinding
 

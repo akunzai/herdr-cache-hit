@@ -722,4 +722,126 @@ assert_cmd "! acquire_lock" 'acquire_lock returns 1 when lock is held by live pr
 assert_cmd "[[ -f \"$rerun_lock_dir/rerun\" ]]" 'contended acquire_lock touches rerun flag'
 rm -rf "$rerun_lock_dir"
 
+# Opt-in cache warmers submit only to an idle, unfocused pane with an empty prompt.
+warm_state="$TMP/warm-state"
+warm_config="$TMP/warm-config"
+warm_log="$TMP/warm-prompts"
+warm_fake="$TMP/fake-herdr-warm"
+mkdir -p "$warm_state" "$warm_config"
+cat >"$warm_fake" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "api snapshot")
+    printf '{"result":{"snapshot":{"panes":[{"pane_id":"pWarm","agent":"%s","agent_status":"%s","focused":%s,"agent_session":{"kind":"id","value":"%s"}}]}}}\n' "${FAKE_AGENT:-codex}" "${FAKE_STATUS:-idle}" "${FAKE_FOCUSED:-false}" "${FAKE_SESSION_ID:-warm-session-1}"
+    ;;
+  "agent read")
+    if [[ -n "${FAKE_PROMPT_LINE:-}" ]]; then printf '%s\n' "$FAKE_PROMPT_LINE"
+    elif [[ "${FAKE_AGENT:-codex}" == agy ]]; then printf '>\n'
+    else printf '› Ask Codex to do anything\n'; fi
+    ;;
+  "agent prompt") printf '%s\n' "$*" >>"$FAKE_PROMPT_LOG" ;;
+esac
+SH
+chmod +x "$warm_fake"
+warm_deadline=$(( $(date +%s) + 120 ))
+printf '{"active":{"agent":"codex","session_id":"warm-session-1","model":"gpt-test","provider":"openai","signature":"sig","hit_at":%s,"deadline":%s},"last_known":null,"observations":[]}\n' "$((warm_deadline - 1800))" "$warm_deadline" >"$warm_state/state-pWarm.json"
+printf '{"codex":{"cache_warmer_sessions":["warm-session-1"],"cache_warmer_margin_seconds":300,"cache_warmer_max_per_session":2}}\n' >"$warm_config/config.json"
+FAKE_PROMPT_LOG="$warm_log" FAKE_STATUS=working HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+assert_cmd "[[ ! -s \"$warm_log\" ]]" 'Codex warmer skips a working parent session, including a subagent wait'
+FAKE_PROMPT_LOG="$warm_log" FAKE_FOCUSED=true HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+assert_cmd "[[ ! -s \"$warm_log\" ]]" 'Codex warmer skips a focused pane'
+FAKE_PROMPT_LOG="$warm_log" FAKE_PROMPT_LINE='› typed user message' HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+assert_cmd "[[ ! -s \"$warm_log\" ]]" 'Codex warmer skips a nonempty prompt editor'
+FAKE_PROMPT_LOG="$warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$warm_log\") -eq 1 ]]" 'Codex warmer submits one prompt only when all idle guards pass'
+assert_eq "$(cat "$warm_state/codex-warm-count-warm-session-1")" 1 'Codex warmer records its per-session refresh count'
+assert_cmd "[[ -e \"$warm_state/codex-warm-marker-warm-session-1\" ]]" 'Codex warmer marks observations affected by synthetic turns'
+printf '{"codex":{"cache_warmer_sessions":["warm-session-1"],"cache_warmer_max_per_session":0}}\n' >"$warm_config/config.json"
+printf '2\n' >"$warm_state/codex-warm-count-warm-session-1"
+FAKE_PROMPT_LOG="$warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+assert_eq "$(cat "$warm_state/codex-warm-count-warm-session-1")" 3 'unlimited Codex warming continues beyond the former two-attempt cap'
+warm_observation_marker=$(codex_warm_marker_path warmer-observation-test)
+: >"$warm_observation_marker"
+record_warmed_observation codex warmer-observation-test warmer-provider warmer-model 900 1800
+assert_cmd "! jq -e 'has(\"warmer-provider:warmer-model\")' '$OBSERVATIONS_FILE' >/dev/null 2>&1" 'warmer interval does not enter learned survival observations'
+assert_cmd "[[ ! -e \"$warm_observation_marker\" ]]" 'warmer observation marker is consumed at the next survival result'
+
+agy_warm_state="$TMP/agy-warm-state"
+agy_warm_config="$TMP/agy-warm-config"
+agy_warm_log="$TMP/agy-warm-prompts"
+mkdir -p "$agy_warm_state" "$agy_warm_config"
+agy_warm_deadline=$(( $(date +%s) + 120 ))
+printf '{"active":{"agent":"agy","session_id":"agy-warm-session","model":"gemini-test","provider":"google","signature":"sig","hit_at":%s,"deadline":%s},"last_known":null,"observations":[]}\n' "$((agy_warm_deadline - 1800))" "$agy_warm_deadline" >"$agy_warm_state/state-pWarm.json"
+printf '{"agy":{"cache_warmer_sessions":["agy-warm-session"],"cache_warmer_margin_seconds":300,"cache_warmer_max_per_session":2}}\n' >"$agy_warm_config/config.json"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_STATUS=working FAKE_PROMPT_LOG="$agy_warm_log" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+assert_cmd "[[ ! -s \"$agy_warm_log\" ]]" 'AGY warmer skips a working parent session'
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_FOCUSED=true FAKE_PROMPT_LOG="$agy_warm_log" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+assert_cmd "[[ ! -s \"$agy_warm_log\" ]]" 'AGY warmer skips a focused pane'
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LINE=$'>\n> typed user message' FAKE_PROMPT_LOG="$agy_warm_log" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+assert_cmd "[[ ! -s \"$agy_warm_log\" ]]" 'AGY warmer skips a nonempty prompt editor'
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LOG="$agy_warm_log" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$agy_warm_log\") -eq 1 ]]" 'AGY warmer submits on the standalone empty prompt line'
+assert_eq "$(cat "$agy_warm_state/agy-warm-count-agy-warm-session")" 1 'AGY warmer records its per-session attempt count'
+agy_warm_marker=$(warm_marker_path agy agy-observation-test)
+: >"$agy_warm_marker"
+record_warmed_observation agy agy-observation-test agy-provider agy-model 900 1800
+assert_cmd "! jq -e 'has(\"agy-provider:agy-model\")' '$OBSERVATIONS_FILE' >/dev/null 2>&1" 'AGY warmed interval is excluded from learned survival observations'
+
+# The keyboard toggle persists the flag, and the normal cache token exposes armed state.
+warm_toggle_config="$TMP/warm-toggle-config"
+warm_toggle_state="$TMP/warm-toggle-state"
+warm_toggle_fake="$TMP/fake-herdr-toggle"
+mkdir -p "$warm_toggle_config" "$warm_toggle_state"
+printf '{"bold_time":false}\n' >"$warm_toggle_config/config.json"
+cat >"$warm_toggle_fake" <<'SH'
+#!/usr/bin/env bash
+if [[ "$1 $2" == "api snapshot" ]]; then
+  printf '{"result":{"snapshot":{"panes":[{"pane_id":"pToggle","agent":"%s","agent_session":{"kind":"id","value":"toggle-session"}}]}}}\n' "${FAKE_TOGGLE_AGENT:-codex}"
+elif [[ "$1 $2" == "notification show" ]]; then
+  printf '%s\n' "$*" >>"$FAKE_NOTIFICATION_LOG"
+fi
+SH
+chmod +x "$warm_toggle_fake"
+warm_notification_log="$TMP/warm-notifications"
+FAKE_NOTIFICATION_LOG="$warm_notification_log" HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" toggle >/dev/null
+assert_cmd "jq -e '.codex.cache_warmer_sessions == [\"toggle-session\"] and .bold_time == false' '$warm_toggle_config/config.json' >/dev/null" 'warmer toggle arms focused Codex session and preserves other config'
+assert_cmd "grep -Fq 'notification show Cache warming enabled --body codex session will be warmed near its cache deadline. --sound none' '$warm_notification_log'" 'per-session warmer toggle shows a quiet Herdr notification'
+HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" toggle >/dev/null
+assert_cmd "jq -e '.codex.cache_warmer_sessions == []' '$warm_toggle_config/config.json' >/dev/null" 'warmer toggle disarms focused Codex session'
+FAKE_TOGGLE_AGENT=agy HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" toggle >/dev/null
+assert_cmd "jq -e '.agy.cache_warmer_sessions == [\"toggle-session\"]' '$warm_toggle_config/config.json' >/dev/null" 'warmer toggle arms a focused AGY session'
+FAKE_TOGGLE_AGENT=agy HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" toggle >/dev/null
+assert_cmd "jq -e '.agy.cache_warmer_sessions == []' '$warm_toggle_config/config.json' >/dev/null" 'warmer toggle disarms a focused AGY session'
+printf '{"codex":{"cache_warmer_sessions":["toggle-session"]},"agy":{"cache_warmer_sessions":[]}}\n' >"$warm_toggle_config/config.json"
+FAKE_NOTIFICATION_LOG="$warm_notification_log" HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" global-toggle >/dev/null
+assert_cmd "jq -e '.cache_warmer_global_enabled == true' '$warm_toggle_config/config.json' >/dev/null" 'global warmer toggle enables all Codex and AGY sessions'
+assert_cmd "grep -Fq 'notification show Cache warming enabled globally --body All Codex and AGY sessions will be warmed near their cache deadlines. --sound none' '$warm_notification_log'" 'global warmer toggle shows a quiet Herdr notification'
+assert_cmd "HERDR_PLUGIN_CONFIG_DIR='$warm_toggle_config' bash -c 'source \"$ROOT/lib/core.sh\"; warmer_enabled_for_session agy future-session'" 'global warmer includes newly opened AGY sessions'
+FAKE_TOGGLE_AGENT=agy HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" toggle >/dev/null
+assert_cmd "jq -e '.cache_warmer_global_excluded_sessions.agy == [\"toggle-session\"]' '$warm_toggle_config/config.json' >/dev/null" 'per-session toggle excludes a session during global mode'
+FAKE_TOGGLE_AGENT=agy HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" toggle >/dev/null
+assert_cmd "HERDR_PLUGIN_CONFIG_DIR='$warm_toggle_config' bash -c 'source \"$ROOT/lib/core.sh\"; warmer_enabled_for_session agy toggle-session'" 'per-session toggle restores a session during global mode'
+HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" bash "$ROOT/bin/herdr-cache-warm" global-toggle >/dev/null
+assert_cmd "jq -e '.cache_warmer_global_enabled == false and .agy.cache_warmer_sessions == [] and .codex.cache_warmer_sessions == [\"toggle-session\"]' '$warm_toggle_config/config.json' >/dev/null" 'global warmer toggle returns to saved per-session settings'
+printf '{"codex":{"cache_warmer_sessions":["armed-session"],"cache_warmer_max_per_session":2}}\n' >"$warm_toggle_config/config.json"
+printf '{"active":{"session_id":"armed-session"}}\n' >"$warm_toggle_state/state-pArmed.json"
+warm_display_log="$TMP/warm-display-report"
+warm_report_fake="$TMP/fake-herdr-report"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\\n" "$*" >>"$FAKE_REPORTS"' >"$warm_report_fake"
+chmod +x "$warm_report_fake"
+FAKE_REPORTS="$warm_display_log" HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_report_fake" bash -c 'source "$1/lib/core.sh"; report_pane pArmed codex "~1:00 99% ⇣1k" 15000 "~1:00" "99%" "⇣1k" hot "99% ⇣1k" 2000000000 60 99' _ "$ROOT"
+assert_cmd "grep -Fq 'cache=↻~1:00 99% ⇣1k' '$warm_display_log'" 'armed Codex cache displays the default refresh marker before the timer'
+printf '{"cache_warmer_global_enabled":true,"codex":{"cache_warmer_sessions":[]}}\n' >"$warm_toggle_config/config.json"
+printf '2\n' >"$warm_toggle_state/codex-warm-count-armed-session"
+FAKE_REPORTS="$warm_display_log" HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_report_fake" bash -c 'source "$1/lib/core.sh"; report_pane pArmed codex "~1:00 99% ⇣1k" 15000 "~1:00" "99%" "⇣1k" hot "99% ⇣1k" 2000000000 60 99' _ "$ROOT"
+assert_cmd "grep -Fq 'cache=↻~1:00 99% ⇣1k' '$warm_display_log'" 'global warmer marker remains visible after prior capped attempts'
+printf '{"cache_warmer_symbol":"⟳","codex":{"cache_warmer_sessions":["armed-session"],"cache_warmer_max_per_session":2}}\n' >"$warm_toggle_config/config.json"
+printf '0\n' >"$warm_toggle_state/codex-warm-count-armed-session"
+FAKE_REPORTS="$warm_display_log" HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_report_fake" bash -c 'source "$1/lib/core.sh"; report_pane pArmed codex "~1:00 99% ⇣1k" 15000 "~1:00" "99%" "⇣1k" hot "99% ⇣1k" 2000000000 60 99' _ "$ROOT"
+assert_cmd "grep -Fq 'cache=⟳~1:00 99% ⇣1k' '$warm_display_log'" 'cache warmer marker is configurable'
+printf '{"cache_warmer_symbol":"↻","agy":{"cache_warmer_sessions":["agy-armed-session"],"cache_warmer_max_per_session":2}}\n' >"$warm_toggle_config/config.json"
+printf '{"active":{"session_id":"agy-armed-session"}}\n' >"$warm_toggle_state/state-pAgyArmed.json"
+FAKE_REPORTS="$warm_display_log" HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_report_fake" bash -c 'source "$1/lib/core.sh"; report_pane pAgyArmed agy "~1:00 99% ⇣1k" 15000 "~1:00" "99%" "⇣1k" hot "99% ⇣1k" 2000000000 60 99' _ "$ROOT"
+assert_cmd "grep -Fq 'cache=↻~1:00 99% ⇣1k' '$warm_display_log'" 'armed AGY cache displays the auto-warm marker too'
+
 exit "$fail"

@@ -17,6 +17,28 @@ readonly ROLLOUT_INDEX="$STATE_DIR/rollouts.index"
 readonly ROLLOUT_INDEX_TTL=15
 readonly ACTIVE_RESCAN_SECONDS=15
 readonly OBSERVATIONS_FILE="$STATE_DIR/observations.json"
+codex_warm_count_path() { printf '%s/codex-warm-count-%s\n' "$STATE_DIR" "${1//[^A-Za-z0-9_.-]/_}"; }
+codex_warm_marker_path() { printf '%s/codex-warm-marker-%s\n' "$STATE_DIR" "${1//[^A-Za-z0-9_.-]/_}"; }
+warm_count_path() {
+  local agent=$1 session_id=$2
+  if [[ "$agent" == codex ]]; then codex_warm_count_path "$session_id"; else printf '%s/%s-warm-count-%s\n' "$STATE_DIR" "$agent" "${session_id//[^A-Za-z0-9_.-]/_}"; fi
+}
+warm_marker_path() {
+  local agent=$1 session_id=$2
+  if [[ "$agent" == codex ]]; then codex_warm_marker_path "$session_id"; else printf '%s/%s-warm-marker-%s\n' "$STATE_DIR" "$agent" "${session_id//[^A-Za-z0-9_.-]/_}"; fi
+}
+state_path() { printf '%s/state-%s.json\n' "$STATE_DIR" "${1//[^A-Za-z0-9_.-]/_}"; }
+warmer_enabled_for_session() {
+  local agent=$1 session_id=$2
+  [[ -s "$CONFIG_FILE" ]] || return 1
+  jq -e --arg agent "$agent" --arg sid "$session_id" '
+    if .cache_warmer_global_enabled == true then
+      ((.cache_warmer_global_excluded_sessions[$agent] // []) | index($sid)) == null
+    else
+      ((.[$agent].cache_warmer_sessions // []) | index($sid)) != null
+    end
+  ' "$CONFIG_FILE" >/dev/null 2>&1
+}
 next_wake_delay() {
   local active=${1:-0} transition=${2:-} delay=$ACTIVE_RESCAN_SECONDS
   [[ "$active" =~ ^[0-9]+$ ]] && (( active > 0 )) || return 1
@@ -129,6 +151,24 @@ report_pane() {
   local status_val=${5:-} pct_val=${6:-} tokens_val=${7:-} state_val=${8:-}
   local details_val=${9:-} deadline_val=${10:-}
   local remaining_secs=${11:-} pct_num=${12:-}
+  if [[ ("$agent" == codex || "$agent" == agy) && -n "$deadline_val" && "$deadline_val" =~ ^[0-9]+$ && "$deadline_val" -gt 0 ]]; then
+    local warm_sid warm_count warm_max warm_count_file
+    warm_sid=$(jq -r '.active.session_id // ""' "$(state_path "$pane")" 2>/dev/null || printf '')
+    warm_count_file=$(warm_count_path "$agent" "$warm_sid")
+    warm_count=$(cat "$warm_count_file" 2>/dev/null || printf 0)
+    warm_max=$(config_int "$agent" cache_warmer_max_per_session 0)
+    (( warm_max == 0 || (warm_max >= 1 && warm_max <= 3) )) || warm_max=0
+    [[ "$warm_count" =~ ^[0-9]+$ ]] || warm_count=0
+    if [[ -n "$warm_sid" ]] && { (( warm_max == 0 || warm_count < warm_max )); } && warmer_enabled_for_session "$agent" "$warm_sid"; then
+      local auto_symbol before_clock after_clock
+      auto_symbol=$(config_str global cache_warmer_symbol '↻')
+      if [[ -n "$auto_symbol" && "$token_val" == *"~"* ]]; then
+        before_clock=${token_val%%~*}
+        after_clock=${token_val#*~}
+        token_val="${before_clock}${auto_symbol}~${after_clock}"
+      fi
+    fi
+  fi
   local cmd=("$HERDR_BIN" pane report-metadata "$pane" --source "$SOURCE" --agent "$agent" --token "cache=$token_val" --ttl-ms "$ttl_ms")
   cmd+=(--token "cache_status=$status_val")
   if [[ -n "$pct_val" ]]; then

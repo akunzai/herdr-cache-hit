@@ -1,7 +1,10 @@
 {
+  "cache_warmer_global_enabled": false,
+  "cache_warmer_global_excluded_sessions": {},
   "hot_symbol": "",
   "expiring_symbol": "⏰",
   "cold_symbol": "❄",
+  "cache_warmer_symbol": "↻",
   "expiring_threshold_seconds": 300,
   "bold_time": true,
   "bold_threshold_seconds": 300,
@@ -10,6 +13,9 @@
   "mobile_width_threshold": 64,
   "agy": {
     "enabled": true,
+    "cache_warmer_sessions": [],
+    "cache_warmer_margin_seconds": 300,
+    "cache_warmer_max_per_session": 0,
     "show_deadline": true,
     "show_read_tokens": true,
     "show_write_tokens": false,
@@ -28,6 +34,9 @@
   },
   "codex": {
     "enabled": true,
+    "cache_warmer_sessions": [],
+    "cache_warmer_margin_seconds": 300,
+    "cache_warmer_max_per_session": 0,
     "show_deadline": true,
     "show_read_tokens": true,
     "show_write_tokens": false,

@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.1.10] - 2026-10-03
+### Added
+- Add optional Codex and AGY cache warming with per-session and global toggles, visible status markers, and quiet Herdr notifications.
+- Continue warming opted-in sessions indefinitely by default; allow a finite per-session attempt limit through configuration.
+### Changed
+- Exclude survival observations affected by synthetic warmer turns.
+
 ## [0.1.9] - 2026-10-03
 ### Fixed
 - Rebase persisted Codex cache deadlines during startup even when usage data is temporarily unavailable.
