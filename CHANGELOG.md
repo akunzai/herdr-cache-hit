@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.1.12] - 2026-10-03
+- Set AGY's default cache warmer margin to 60 seconds before expiration; Codex stays at 300 seconds. Both remain configurable.
+
 ## [0.1.11] - 2026-10-03
 - Prevent duplicate warmer prompts within the same unchanged cache window.
 - Skip AGY warming while its transcript shows an unfinished delegated background task, even when Herdr reports the foreground turn as done.

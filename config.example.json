@@ -14,7 +14,7 @@
   "agy": {
     "enabled": true,
     "cache_warmer_sessions": [],
-    "cache_warmer_margin_seconds": 300,
+    "cache_warmer_margin_seconds": 60,
     "cache_warmer_max_per_session": 0,
     "show_deadline": true,
     "show_read_tokens": true,

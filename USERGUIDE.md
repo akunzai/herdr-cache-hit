@@ -71,7 +71,7 @@ Supported agent keys: `agy` (Antigravity CLI), `claude` (Claude Code), `codex` (
   "agy": {
     "enabled": true,
     "cache_warmer_sessions": [],
-    "cache_warmer_margin_seconds": 300,
+    "cache_warmer_margin_seconds": 60,
     "cache_warmer_max_per_session": 0,
     "show_deadline": true,
     "show_read_tokens": true,
@@ -89,7 +89,7 @@ Supported agent keys: `agy` (Antigravity CLI), `claude` (Claude Code), `codex` (
 | `cache_warmer_sessions` | array of session IDs | `[]` | Codex and AGY. Sessions explicitly armed with `prefix+u`; each eligible session may receive a short normal turn near the current countdown deadline. The experimental turn is appended to the conversation. |
 | `cache_warmer_global_enabled` | boolean | `false` | When true, all Codex and AGY sessions are armed, including sessions opened later. `prefix+shift+u` toggles global mode; turning it off returns to the per-session settings. |
 | `cache_warmer_global_excluded_sessions` | object of agent to session ID arrays | `{}` | Per-session exclusions while global mode is on. `prefix+u` toggles the focused session in or out of the global set. |
-| `cache_warmer_margin_seconds` | integer | `300` | Codex and AGY. Attempt a warm turn when the displayed cache countdown reaches this many seconds; accepted range is 30–600 seconds. |
+| `cache_warmer_margin_seconds` | integer | Codex `300`, AGY `60` | Attempt a warm turn when the displayed cache countdown reaches this many seconds; accepted range is 30–600 seconds. |
 | `cache_warmer_max_per_session` | integer | `0` | Codex and AGY. `0` allows indefinite warming while the session is opted in; set 1–3 to cap warm-turn attempts per session. |
 | `show_deadline` | boolean | `true` | Include the estimated expiration countdown time (`~15:44`). |
 | `show_read_tokens` | boolean | `true` | Include read/cached tokens counter (e.g. `⇣95.4k`). |

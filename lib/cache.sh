@@ -402,7 +402,9 @@ maybe_warm_agent() {
   now=${now:-$(date +%s)}
   remaining=$((deadline - now))
   (( remaining > 0 )) || return 0
-  margin=$(config_int "$agent" cache_warmer_margin_seconds 300)
+  local default_margin=300
+  [[ "$agent" == agy ]] && default_margin=60
+  margin=$(config_int "$agent" cache_warmer_margin_seconds "$default_margin")
   (( margin >= 30 && margin <= 600 )) || margin=300
   (( remaining <= margin )) || return 0
   warmer_enabled_for_session "$agent" "$session_id" || return 0
