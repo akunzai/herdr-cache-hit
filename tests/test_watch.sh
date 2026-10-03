@@ -210,7 +210,7 @@ update_pane paneAGY agy agy-1 /same; assert_cmd "jq -e '.active.agent == \"agy\"
 jq --argjson now "$now" '.deadline = ($now - 1)' "$AGY_STATUSLINE_STATE_DIR/agy-1.json" >"$AGY_STATUSLINE_STATE_DIR/agy-1.tmp" && mv "$AGY_STATUSLINE_STATE_DIR/agy-1.tmp" "$AGY_STATUSLINE_STATE_DIR/agy-1.json"
 assert_eq "$(agy_usage agy-1 | cut -f1,2,4-10)" $'agy\tagy-1\t12000\t48900\t3000\t0\t0\tGemini 3.8 Flash\tantigravity' 'expired AGY sidecar falls back to transcript data'
 update_pane paneClaude claude claude-1 /same; assert_cmd "jq -e '.active.agent == \"claude\" and .active.provider == \"anthropic\"' \"$(state_path paneClaude)\"" 'Claude state is isolated by agent and provider'
-mkdir "$STATE_DIR/watcher.lock"; printf '%s\n' 999999 >"$STATE_DIR/watcher.lock/pid"; assert_cmd 'acquire_lock' 'stale lock is recoverable'; cleanup
+mkdir "$STATE_DIR/watcher.lock"; printf '%s\n' 999999 >"$STATE_DIR/watcher.lock/pid"; assert_cmd 'acquire_lock' 'stale lock is recoverable'; cleanup; rm -rf "$STATE_DIR/watcher.lock"
 if command -v python3 >/dev/null 2>&1; then
   py=$(python3 - "$roll" <<'PY'
 import json,sys
@@ -569,6 +569,10 @@ unset -f codex_usage
 
 # 9. Complete same-pane restart through watch_main. Timer lifecycle is tested
 # above in-process so child reaping is deterministic on both Linux and macOS.
+# Restore the production adapter after the preceding stale-state test replaced it.
+# shellcheck source=../lib/codex.sh
+. "$ROOT/lib/codex.sh"
+rm -rf "$LOCK_DIR"
 restart_reports="$TMP/restart-reports"
 restart_panes="$TMP/restart-panes.json"
 restart_a="$CODEX_SESSIONS_DIR/2026/09/06/rollout-restart-A.jsonl"
@@ -577,13 +581,16 @@ restart_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 printf '%s\n' '{"type":"session_meta","payload":{"id":"restart-A","cwd":"/same"}}' "{\"type\":\"token_usage_record\",\"timestamp\":\"$restart_ts\",\"payload\":{\"usage\":{\"input_tokens\":1000,\"cached_input_tokens\":800},\"model\":\"model-A\",\"model_provider\":\"provider-A\"}}" >"$restart_a"
 rm -f "$ROLLOUT_INDEX"
 printf '%s\n' '{"result":{"panes":[{"pane_id":"paneRestartWatch","agent":"codex","cwd":"/same","agent_session":{"kind":"id","value":"restart-A"}}]}}' >"$restart_panes"
+rm -rf "$LOCK_DIR"
 FAKE_PANES="$restart_panes" FAKE_REPORTS="$restart_reports" HERDR_BIN_PATH="$fake" bash "$ROOT/watch.sh"
 
 printf '%s\n' '{"result":{"panes":[{"pane_id":"paneRestartWatch","agent":"codex","cwd":"/same","agent_session":null}]}}' >"$restart_panes"
+rm -rf "$LOCK_DIR"
 FAKE_PANES="$restart_panes" FAKE_REPORTS="$restart_reports" HERDR_BIN_PATH="$fake" bash "$ROOT/watch.sh"
 assert_cmd "jq -e '.active == null' \"$(state_path paneRestartWatch)\"" 'watch_main clears session A state when identity disappears'
 
 printf '%s\n' '{"result":{"panes":[{"pane_id":"paneRestartWatch","agent":"codex","cwd":"/same","agent_session":{"kind":"id","value":"restart-B"}}]}}' >"$restart_panes"
+rm -rf "$LOCK_DIR"
 FAKE_PANES="$restart_panes" FAKE_REPORTS="$restart_reports" HERDR_BIN_PATH="$fake" bash "$ROOT/watch.sh"
 assert_cmd "jq -e '.active == null' \"$(state_path paneRestartWatch)\"" 'watch_main keeps replacement session cold before its first record'
 
@@ -595,6 +602,7 @@ assert_eq "$(next_wake_delay 1 '')" "15" 'active cache rescan delay is capped at
 assert_eq "$(next_wake_delay 1 5)" "5" 'expiration transition preempts the 15-second rescan interval'
 assert_eq "$(next_wake_delay 0 5 || true)" "" 'cold caches request no wake delay'
 printf '%s\n' '{"result":{"panes":[{"pane_id":"paneRestartWatch","agent":"codex","cwd":"/same","agent_session":null}]}}' >"$restart_panes"
+rm -rf "$LOCK_DIR"
 FAKE_PANES="$restart_panes" FAKE_REPORTS="$restart_reports" HERDR_BIN_PATH="$fake" bash "$ROOT/watch.sh"
 assert_cmd "jq -e '.active == null' \"$(state_path paneRestartWatch)\"" 'watch_main leaves the pane cold after session B disappears'
 
@@ -702,6 +710,7 @@ printf '%s\n' '#!/usr/bin/env bash' 'if [[ "$1 $2" == "api snapshot" ]]; then ca
 printf '{"result":{"snapshot":{"panes":[{"pane_id":"pSnapWide","agent":"codex","cwd":"/same","agent_session":{"kind":"id","value":"sWide"}}],"layouts":[{"area":{"width":120,"height":40}}]}}}\n' >"$snapshot_panes"
 printf '{"type":"session_meta","payload":{"id":"sWide","cwd":"/same"}}' >"$CODEX_SESSIONS_DIR/2026/09/06/rollout-sWide.jsonl"
 rm -f "$snapshot_reports" "$ROLLOUT_INDEX"
+rm -rf "$LOCK_DIR"
 FAKE_SNAPSHOT="$snapshot_panes" FAKE_REPORTS="$snapshot_reports" HERDR_BIN_PATH="$fake_snapshot" WATCH_ONCE=1 bash "$ROOT/watch.sh"
 assert_cmd "grep -q 'pSnapWide.*--clear-display-agent' \"$snapshot_reports\"" 'watch.sh detects wide snapshot layout and clears display-agent'
 
@@ -710,6 +719,7 @@ printf '{"result":{"snapshot":{"panes":[{"pane_id":"pSnapNarrow","agent":"codex"
 ts_narrow=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 printf '%s\n%s\n' '{"type":"session_meta","payload":{"id":"sNarrow","cwd":"/same"}}' "{\"type\":\"token_usage_record\",\"timestamp\":\"$ts_narrow\",\"payload\":{\"usage\":{\"input_tokens\":1000,\"cached_input_tokens\":500},\"model\":\"m\",\"model_provider\":\"p\"}}" >"$CODEX_SESSIONS_DIR/2026/09/06/rollout-sNarrow.jsonl"
 rm -f "$snapshot_reports" "$ROLLOUT_INDEX"
+rm -rf "$LOCK_DIR"
 FAKE_SNAPSHOT="$snapshot_panes" FAKE_REPORTS="$snapshot_reports" HERDR_BIN_PATH="$fake_snapshot" WATCH_ONCE=1 bash "$ROOT/watch.sh"
 assert_cmd "grep -q 'pSnapNarrow.*--display-agent codex' \"$snapshot_reports\"" 'watch.sh detects narrow snapshot layout and injects display-agent'
 
@@ -833,6 +843,17 @@ printf '{"active":{"agent":"claude","session_id":"claude-unknown-session","hit_a
 printf '{"claude":{"cache_warmer_sessions":["claude-unknown-session"]}}\n' >"$warm_config/config.json"
 FAKE_AGENT=claude FAKE_PANE_ID=pClaudeUnknown FAKE_SESSION_ID=claude-unknown-session FAKE_PROMPT_LOG="$claude_warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent claude pClaudeUnknown claude-unknown-session' _ "$ROOT"
 assert_cmd "[[ \$(wc -l <\"$claude_warm_log\") -eq 1 ]]" 'Claude warmer skips a cache with unknown lifetime'
+
+# The watcher must route active Claude panes into the same opt-in warmer path.
+claude_watch_calls="$TMP/claude-watch-warm-calls"
+printf '{"result":{"snapshot":{"panes":[{"pane_id":"pWatchClaude","agent":"claude","cwd":"/same","agent_session":{"kind":"id","value":"watch-claude"}}]}}}\n' >"$snapshot_panes"
+FAKE_SNAPSHOT="$snapshot_panes" FAKE_REPORTS="$snapshot_reports" FAKE_WARM_CALLS="$claude_watch_calls" HERDR_BIN_PATH="$fake_snapshot" bash -c '
+  source "$1/watch.sh"
+  update_pane() { ACTIVE_CACHE_COUNT=1; }
+  maybe_warm_agent() { printf "%s\n" "$*" >>"$FAKE_WARM_CALLS"; }
+  watch_main
+' _ "$ROOT"
+assert_cmd "grep -qx 'claude pWatchClaude watch-claude' '$claude_watch_calls'" 'watcher routes an active Claude pane to the warmer'
 
 # The keyboard toggle persists the flag, and the normal cache token exposes armed state.
 warm_toggle_config="$TMP/warm-toggle-config"

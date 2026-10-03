@@ -59,7 +59,7 @@ watch_main() {
         continue
       fi
       update_pane "$pane_id" "$agent" "$session_id" "$cwd" "$session_path"
-      if [[ ("$agent" == codex || "$agent" == agy) ]] && (( ACTIVE_CACHE_COUNT > 0 )); then
+      if [[ ("$agent" == codex || "$agent" == agy || "$agent" == claude) ]] && (( ACTIVE_CACHE_COUNT > 0 )); then
         maybe_warm_agent "$agent" "$pane_id" "$session_id"
       fi
     done <<<"$rows"

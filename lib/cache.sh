@@ -423,8 +423,7 @@ maybe_warm_agent() {
   # Herdr's AGY state can say done while an AGY-managed background task is
   # still running. The transcript provides the task lifecycle signal.
   if [[ "$agent" == agy ]]; then
-    agy_has_running_background_task "$session_id"
-    [[ $? -eq 0 ]] && return 0
+    if agy_has_running_background_task "$session_id"; then return 0; fi
   fi
 
   max_count=$(config_int "$agent" cache_warmer_max_per_session 0)
