@@ -226,19 +226,29 @@ update_pane() {
         ' "$state" >"$state.tmp" 2>/dev/null && atomic_install "$state.tmp" "$state"
       fi
   fi
+  if [[ "$agent" == agy && "$source_deadline" =~ ^[0-9]+$ && "$source_deadline" -gt 0 ]]; then
+      jq --arg agent "$agent" --arg sid "$session_id" --argjson deadline "$source_deadline" 'if .active != null and .active.agent == $agent and .active.session_id == $sid then .active.deadline=$deadline else . end' "$state" >"$state.tmp" 2>/dev/null && atomic_install "$state.tmp" "$state"
+    fi
+  fi
   # Rebase existing Codex state after a policy change without extending the
   # cache lifetime: keep the original hit time and apply the new model estimate.
-  if [[ "$agent" == codex && -n "$record" && "$prev_active" == true && "$prev_sid" == "$session_id" && "$prev_sig" == "$signature" ]]; then
-    local codex_ttl prev_ttl rebased_deadline
-    codex_ttl=$(get_learned_ttl "$provider" "$model" "$ttl_floor" "$ttl_max" true)
+  local rebase_codex_state=false codex_max
+  if [[ -z "$record" ]]; then
+    if [[ "$prev_active" == true && "$prev_sid" == "$session_id" && "$prev_deadline" =~ ^[0-9]+$ && "$prev_deadline" -gt "$now" ]]; then
+      rebase_codex_state=true
+    fi
+  elif [[ "$prev_active" == true && "$prev_sid" == "$session_id" && "$prev_sig" == "${signature:-}" ]]; then
+    rebase_codex_state=true
+  fi
+  if [[ "$agent" == codex && "$rebase_codex_state" == true ]]; then
+    local codex_ttl codex_floor prev_ttl rebased_deadline
+    codex_floor=$FLOOR_SECONDS
+    codex_max=$(config_int codex ttl_ceiling "$CEILING_SECONDS")
+    codex_ttl=$(get_learned_ttl "$provider" "$model" "$codex_floor" "$codex_max" true)
     prev_ttl=$((prev_deadline - prev_hit_at))
     rebased_deadline=$((prev_hit_at + codex_ttl))
     if (( prev_ttl > codex_ttl )); then
       jq --argjson deadline "$rebased_deadline" '.active.deadline = $deadline' "$state" >"$state.tmp" 2>/dev/null && atomic_install "$state.tmp" "$state"
-    fi
-  fi
-  if [[ "$agent" == agy && "$source_deadline" =~ ^[0-9]+$ && "$source_deadline" -gt 0 ]]; then
-      jq --arg agent "$agent" --arg sid "$session_id" --argjson deadline "$source_deadline" 'if .active != null and .active.agent == $agent and .active.session_id == $sid then .active.deadline=$deadline else . end' "$state" >"$state.tmp" 2>/dev/null && atomic_install "$state.tmp" "$state"
     fi
   fi
   local deadline pct total

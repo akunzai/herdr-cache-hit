@@ -170,6 +170,10 @@ rebase_sig='codex|sRebase|mRebase|pRebase|1000|800|0|0|0'
 jq -n --arg sig "$rebase_sig" --argjson now "$rebase_now" '{active:{agent:"codex",session_id:"sRebase",model:"mRebase",provider:"pRebase",signature:$sig,hit_at:$now,deadline:($now+2467),input:1000,read:800,write:0,write5m:0,write1h:0},observations:[]}' >"$(state_path paneRebase)"
 update_pane paneRebase codex sRebase
 assert_eq "$(jq -r '.active.deadline' "$(state_path paneRebase)")" "$((rebase_now + 1800))" 'upgrade rebases an old Codex estimate from its original hit time'
+codex_usage() { return 1; }
+jq -n --argjson now "$rebase_now" '{active:{agent:"codex",session_id:"sNoRecord",model:"mRebase",provider:"pRebase",signature:"old",hit_at:$now,deadline:($now+2467),input:1000,read:800,write:0,write5m:0,write1h:0},observations:[]}' >"$(state_path paneRebaseNoRecord)"
+update_pane paneRebaseNoRecord codex sNoRecord
+assert_eq "$(jq -r '.active.deadline' "$(state_path paneRebaseNoRecord)")" "$((rebase_now + 1800))" 'upgrade rebases cached Codex state when usage is temporarily unavailable'
 unset -f codex_usage
 
 # Prefix shift guardrail: cold drop within 20s does not add to observations

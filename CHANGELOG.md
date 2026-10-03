@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.9] - 2026-10-03
+### Fixed
+- Rebase persisted Codex cache deadlines during startup even when usage data is temporarily unavailable.
+
 ## [0.1.8] - 2026-10-03
 ### Changed
 - Use a 30-minute baseline for Codex cache countdowns; only shorten it after at least three lower survival observations for the same provider/model, and do not extend it from longer observations.
