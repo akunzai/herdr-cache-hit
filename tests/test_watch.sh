@@ -737,6 +737,7 @@ case "$1 $2" in
   "agent read")
     if [[ -n "${FAKE_PROMPT_LINE:-}" ]]; then printf '%s\n' "$FAKE_PROMPT_LINE"
     elif [[ "${FAKE_AGENT:-codex}" == agy ]]; then printf '>\n'
+    elif [[ "${FAKE_AGENT:-codex}" == claude ]]; then printf '❯\n'
     else printf '› Ask Codex to do anything\n'; fi
     ;;
   "agent prompt") printf '%s\n' "$*" >>"$FAKE_PROMPT_LOG" ;;
@@ -818,6 +819,21 @@ agy_warm_marker=$(warm_marker_path agy agy-observation-test)
 record_warmed_observation agy agy-observation-test agy-provider agy-model 900 1800
 assert_cmd "! jq -e 'has(\"agy-provider:agy-model\")' '$OBSERVATIONS_FILE' >/dev/null 2>&1" 'AGY warmed interval is excluded from learned survival observations'
 
+# Claude warming requires a known cache lifetime and an exactly empty Claude composer.
+claude_warm_log="$TMP/claude-warm-prompts"
+claude_warm_deadline=$(( $(date +%s) + 50 ))
+printf '{"active":{"agent":"claude","session_id":"claude-warm-session","model":"claude-test","provider":"anthropic","signature":"sig","hit_at":%s,"deadline":%s,"cache_ttl":300,"write5m":1000},"last_known":null,"observations":[]}' "$((claude_warm_deadline - 300))" "$claude_warm_deadline" >"$warm_state/state-pClaude.json"
+printf '{"claude":{"cache_warmer_sessions":["claude-warm-session"]}}\n' >"$warm_config/config.json"
+FAKE_AGENT=claude FAKE_PANE_ID=pClaude FAKE_SESSION_ID=claude-warm-session FAKE_PROMPT_LOG="$claude_warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent claude pClaude claude-warm-session' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$claude_warm_log\") -eq 1 ]]" 'Claude warmer submits near expiry with an empty composer'
+printf '{"active":{"agent":"claude","session_id":"claude-warm-session","model":"claude-test","provider":"anthropic","signature":"sig2","hit_at":%s,"deadline":%s,"cache_ttl":300},"last_known":null,"observations":[]}' "$((claude_warm_deadline - 301))" "$((claude_warm_deadline + 1))" >"$warm_state/state-pClaudeTyped.json"
+FAKE_AGENT=claude FAKE_PANE_ID=pClaudeTyped FAKE_SESSION_ID=claude-warm-session FAKE_PROMPT_LINE=$'❯\n❯ typed message' FAKE_PROMPT_LOG="$claude_warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent claude pClaudeTyped claude-warm-session' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$claude_warm_log\") -eq 1 ]]" 'Claude warmer skips a nonempty composer'
+printf '{"active":{"agent":"claude","session_id":"claude-unknown-session","hit_at":%s,"deadline":%s},"last_known":null}' "$((claude_warm_deadline - 1800))" "$claude_warm_deadline" >"$warm_state/state-pClaudeUnknown.json"
+printf '{"claude":{"cache_warmer_sessions":["claude-unknown-session"]}}\n' >"$warm_config/config.json"
+FAKE_AGENT=claude FAKE_PANE_ID=pClaudeUnknown FAKE_SESSION_ID=claude-unknown-session FAKE_PROMPT_LOG="$claude_warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent claude pClaudeUnknown claude-unknown-session' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$claude_warm_log\") -eq 1 ]]" 'Claude warmer skips a cache with unknown lifetime'
+
 # The keyboard toggle persists the flag, and the normal cache token exposes armed state.
 warm_toggle_config="$TMP/warm-toggle-config"
 warm_toggle_state="$TMP/warm-toggle-state"
@@ -845,8 +861,8 @@ FAKE_TOGGLE_AGENT=agy HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$war
 assert_cmd "jq -e '.agy.cache_warmer_sessions == []' '$warm_toggle_config/config.json' >/dev/null" 'warmer toggle disarms a focused AGY session'
 printf '{"codex":{"cache_warmer_sessions":["toggle-session"]},"agy":{"cache_warmer_sessions":[]}}\n' >"$warm_toggle_config/config.json"
 FAKE_NOTIFICATION_LOG="$warm_notification_log" HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" global-toggle >/dev/null
-assert_cmd "jq -e '.cache_warmer_global_enabled == true' '$warm_toggle_config/config.json' >/dev/null" 'global warmer toggle enables all Codex and AGY sessions'
-assert_cmd "grep -Fq 'notification show Cache warming enabled globally --body All Codex and AGY sessions will be warmed near their cache deadlines. --sound none' '$warm_notification_log'" 'global warmer toggle shows a quiet Herdr notification'
+assert_cmd "jq -e '.cache_warmer_global_enabled == true' '$warm_toggle_config/config.json' >/dev/null" 'global warmer toggle enables all supported sessions'
+assert_cmd "grep -Fq 'notification show Cache warming enabled globally --body All Codex, AGY, and Claude sessions will be warmed near their cache deadlines. --sound none' '$warm_notification_log'" 'global warmer toggle shows a quiet Herdr notification'
 assert_cmd "HERDR_PLUGIN_CONFIG_DIR='$warm_toggle_config' bash -c 'source \"$ROOT/lib/core.sh\"; warmer_enabled_for_session agy future-session'" 'global warmer includes newly opened AGY sessions'
 FAKE_TOGGLE_AGENT=agy HERDR_ACTIVE_PANE_ID=pToggle HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_toggle_fake" bash "$ROOT/bin/herdr-cache-warm" toggle >/dev/null
 assert_cmd "jq -e '.cache_warmer_global_excluded_sessions.agy == [\"toggle-session\"]' '$warm_toggle_config/config.json' >/dev/null" 'per-session toggle excludes a session during global mode'

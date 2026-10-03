@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.1.13] - 2026-10-03
+- Add opt-in Claude Code cache warming with session/global toggles, a visible armed marker, and a 60-second default margin. Claude warming requires a tracked 5-minute or 1-hour cache lifetime and skips unknown lifetimes.
+
 ## [0.1.12] - 2026-10-03
 - Set AGY's default cache warmer margin to 60 seconds before expiration; Codex stays at 300 seconds. Both remain configurable.
 

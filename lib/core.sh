@@ -155,7 +155,7 @@ report_pane() {
   local status_val=${5:-} pct_val=${6:-} tokens_val=${7:-} state_val=${8:-}
   local details_val=${9:-} deadline_val=${10:-}
   local remaining_secs=${11:-} pct_num=${12:-}
-  if [[ ("$agent" == codex || "$agent" == agy) && -n "$deadline_val" && "$deadline_val" =~ ^[0-9]+$ && "$deadline_val" -gt 0 ]]; then
+  if [[ ("$agent" == codex || "$agent" == agy || "$agent" == claude) && -n "$deadline_val" && "$deadline_val" =~ ^[0-9]+$ && "$deadline_val" -gt 0 ]]; then
     local warm_sid warm_count warm_max warm_count_file
     warm_sid=$(jq -r '.active.session_id // ""' "$(state_path "$pane")" 2>/dev/null || printf '')
     warm_count_file=$(warm_count_path "$agent" "$warm_sid")

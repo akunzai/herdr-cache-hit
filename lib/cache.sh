@@ -153,9 +153,14 @@ update_pane() {
     ttl_floor=$FLOOR_SECONDS
     local ttl_max
     ttl_max=$(config_int "$agent" ttl_ceiling "$CEILING_SECONDS")
+    local claude_ttl=0
     if [[ "$agent" == claude ]]; then
-      if [[ "$write1h" -gt 0 ]]; then ttl_floor=3600; ttl_max=3600
-      elif [[ "$write5m" -gt 0 ]]; then ttl_floor=300; ttl_max=300
+      if [[ "$write5m" -gt 0 ]]; then claude_ttl=300
+      elif [[ "$write1h" -gt 0 ]]; then claude_ttl=3600
+      elif [[ "$read" -gt 0 && "$prev_active" == true && "$prev_sid" == "$session_id" ]]; then
+        claude_ttl=$(jq -r '.active.cache_ttl // 0' "$state" 2>/dev/null || printf 0)
+      fi
+      if [[ "$claude_ttl" == 300 || "$claude_ttl" == 3600 ]]; then ttl_floor=$claude_ttl; ttl_max=$claude_ttl
       else ttl_floor=3600; ttl_max=3600
       fi
     elif [[ "$agent" == opencode ]]; then
@@ -230,9 +235,10 @@ update_pane() {
         local new_deadline=$((record_epoch + ttl))
         jq --arg sig "$signature" --arg agent "$agent" --arg sid "$session_id" --arg model "$model" --arg provider "$provider" \
           --argjson at "$record_epoch" --argjson deadline "$new_deadline" \
+          --argjson cache_ttl "${claude_ttl:-0}" \
           --argjson input "$input" --argjson read "$read" --argjson write "$write" \
           --argjson write5m "$write5m" --argjson write1h "$write1h" '
-          .active = {agent:$agent, session_id:$sid, model:$model, provider:$provider, signature:$sig, hit_at:$at, deadline:$deadline, input:$input, read:$read, write:$write, write5m:$write5m, write1h:$write1h} |
+          .active = {agent:$agent, session_id:$sid, model:$model, provider:$provider, signature:$sig, hit_at:$at, deadline:$deadline, cache_ttl:$cache_ttl, input:$input, read:$read, write:$write, write5m:$write5m, write1h:$write1h} |
           .last_known = {agent:$agent, session_id:$sid, model:$model, provider:$provider, input:$input, read:$read, write:$write, write5m:$write5m, write1h:$write1h}
         ' "$state" >"$state.tmp" 2>/dev/null && atomic_install "$state.tmp" "$state"
       fi
@@ -391,7 +397,7 @@ update_pane() {
 }
 maybe_warm_agent() {
   local agent=$1 pane=$2 session_id=$3 state deadline now remaining margin max_count count
-  [[ "$agent" == codex || "$agent" == agy ]] || return 0
+  [[ "$agent" == codex || "$agent" == agy || "$agent" == claude ]] || return 0
   [[ "$session_id" =~ ^[A-Za-z0-9._-]+$ ]] || return 0
 
   state=$(state_path "$pane")
@@ -399,11 +405,16 @@ maybe_warm_agent() {
   [[ "$(jq -r '.active.session_id // ""' "$state" 2>/dev/null)" == "$session_id" ]] || return 0
   deadline=$(jq -r '.active.deadline // 0' "$state" 2>/dev/null) || return 0
   [[ "$deadline" =~ ^[0-9]+$ && "$deadline" -gt 0 ]] || return 0
+  if [[ "$agent" == claude ]]; then
+    local claude_ttl
+    claude_ttl=$(jq -r '.active.cache_ttl // 0' "$state" 2>/dev/null || printf 0)
+    [[ "$claude_ttl" == 300 || "$claude_ttl" == 3600 ]] || return 0
+  fi
   now=${now:-$(date +%s)}
   remaining=$((deadline - now))
   (( remaining > 0 )) || return 0
   local default_margin=300
-  [[ "$agent" == agy ]] && default_margin=60
+  [[ "$agent" == agy || "$agent" == claude ]] && default_margin=60
   margin=$(config_int "$agent" cache_warmer_margin_seconds "$default_margin")
   (( margin >= 30 && margin <= 600 )) || margin=300
   (( remaining <= margin )) || return 0
@@ -446,6 +457,10 @@ maybe_warm_agent() {
     agy)
       last_prompt=$(printf '%s\n' "$screen" | sed -n -E '/^[[:space:]]*>/p' | tail -n 1 | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//')
       [[ "$last_prompt" == '>' ]] || return 0
+      ;;
+    claude)
+      last_prompt=$(printf '%s\n' "$screen" | sed -n -E '/^[[:space:]]*❯/p' | tail -n 1 | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//')
+      [[ "$last_prompt" == '❯' ]] || return 0
       ;;
   esac
 

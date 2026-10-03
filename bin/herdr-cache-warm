@@ -16,11 +16,11 @@ toggle() {
   pane=${HERDR_ACTIVE_PANE_ID:-}
   [[ -n "$pane" ]] || { echo 'Cache warmer toggle needs a focused Herdr pane' >&2; exit 1; }
   identity=$("$HERDR_BIN" api snapshot 2>/dev/null | jq -r --arg pane "$pane" '
-    [.result.snapshot.panes[]? | select(.pane_id == $pane and (.agent == "codex" or .agent == "agy") and .agent_session.kind == "id" and (.agent_session.value | type == "string" and length > 0))] as $p |
+    [.result.snapshot.panes[]? | select(.pane_id == $pane and (.agent == "codex" or .agent == "agy" or .agent == "claude") and .agent_session.kind == "id" and (.agent_session.value | type == "string" and length > 0))] as $p |
     if ($p | length) == 1 then [$p[0].agent, $p[0].agent_session.value] | @tsv else "" end
   ') || identity=""
   IFS=$'\t' read -r agent session_id <<<"$identity"
-  [[ -n "${session_id:-}" ]] || { echo 'Focused pane is not an identified Codex or AGY session' >&2; exit 1; }
+  [[ -n "${session_id:-}" ]] || { echo 'Focused pane is not an identified Codex, AGY, or Claude session' >&2; exit 1; }
   local global_enabled
   global_enabled=$(jq -r '.cache_warmer_global_enabled == true' "$CONFIG_FILE" 2>/dev/null || echo false)
   if warmer_enabled_for_session "$agent" "$session_id"; then enabled=false; else enabled=true; fi
@@ -82,8 +82,8 @@ toggle_global() {
   chmod 600 "$tmp"
   mv -f "$tmp" "$CONFIG_FILE"
   if [[ "$enabled" == true ]]; then
-    printf 'Cache warmer: ON globally for all Codex and AGY sessions\n'
-    show_toggle_notification 'Cache warming enabled globally' 'All Codex and AGY sessions will be warmed near their cache deadlines.'
+    printf 'Cache warmer: ON globally for all Codex, AGY, and Claude sessions\n'
+    show_toggle_notification 'Cache warming enabled globally' 'All Codex, AGY, and Claude sessions will be warmed near their cache deadlines.'
   else
     printf 'Cache warmer: global mode OFF; per-session settings apply\n'
     show_toggle_notification 'Global cache warming disabled' 'Per-session cache warming settings now apply.'

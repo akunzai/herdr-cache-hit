@@ -19,9 +19,9 @@ Supports **Codex CLI**, **AGY** ([Antigravity CLI](docs/AGY_INTEGRATION.md)), **
 - **Urgency Transitions**: Automatic visual transitions from healthy state (`~15:44`) to urgent alarm warning (`⏰~𝟭𝟱:𝟰𝟰`) using mathematical Unicode bold digits when nearing expiration (configurable threshold, default ≤5m).
 - **Declarative Agent Sorting**: Sort active agent panes by prompt-cache expiration deadline (`cache_deadline asc`), keeping expiring agents at the top. Toggle effortlessly with a single keybinding (`prefix+s`).
 - **Bounded Rescans**: Event hooks update immediately. While any cache is active or an enabled Codex pane is present, one lightweight wake timer rescans every 15 seconds (or sooner for an expiration transition). Codex's first cache hit can appear even when the pane started with no cache or native session ID.
-- **Experimental Codex and AGY Warmer**: An opt-in warmer can submit a short ordinary turn when a Codex or AGY pane is idle, unfocused, and showing an empty prompt. It is disabled by default and continues while opted in; a finite per-session cap is configurable. AGY warming also waits for delegated background tasks to finish and sends at most once per unchanged cache window.
-- **Warmer Toggle**: Toggle warming for the focused Codex or AGY session with Herdr's `prefix+u`, or globally across Codex and AGY sessions with `prefix+shift+u`; a configurable `↻` before the countdown marks an armed session.
-- **Privacy-First**: Cache telemetry is read locally. When the experimental Codex or AGY warmer is enabled, its short prompt is submitted like a normal user turn and is stored in that agent session.
+- **Experimental Cache Warmer**: An opt-in warmer can submit a short ordinary turn when a Codex, AGY, or Claude pane is idle, unfocused, and showing an empty prompt. It is disabled by default and continues while opted in; a finite per-session cap is configurable. AGY warming also waits for delegated background tasks to finish and sends at most once per unchanged cache window.
+- **Warmer Toggle**: Toggle warming for the focused Codex, AGY, or Claude session with Herdr's `prefix+u`, or globally across those agents with `prefix+shift+u`; a configurable `↻` before the countdown marks an armed session.
+- **Privacy-First**: Cache telemetry is read locally. When the experimental warmer is enabled, its short prompt is submitted like a normal user turn and is stored in that agent session.
 
 ---
 

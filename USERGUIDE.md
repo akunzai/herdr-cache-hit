@@ -42,7 +42,7 @@ If `config.json` does not exist, safe built-in defaults are used. Changes to `co
 | `hot_symbol` | string | `""` | Symbol or emoji prepended to the countdown clock when the cache is active and healthy (> `expiring_threshold_seconds`). E.g. `"♨️"` or `""`. |
 | `expiring_symbol` | string | `"⏰"` | Symbol or emoji prepended when remaining cache lifetime is less than or equal to `expiring_threshold_seconds`. E.g. `"⏰"` or `"⚠️"`. |
 | `cold_symbol` | string | `"❄"` | Symbol shown immediately before retained token counts when the cache has expired. Set `""` to hide it. |
-| `cache_warmer_symbol` | string | `"↻"` | Symbol placed immediately before the countdown for an armed Codex or AGY session. Set `""` to hide the indicator. |
+| `cache_warmer_symbol` | string | `"↻"` | Symbol placed immediately before the countdown for an armed Codex, AGY, or Claude session. Set `""` to hide the indicator. |
 | `expiring_threshold_seconds`| integer | `300` | Warning threshold in seconds (default 5 minutes). At or below this, the warning symbol appears. |
 | `bold_time` | boolean | `true` | When `true`, converts countdown clock digits into Unicode mathematical sans-serif bold characters (`𝟬-𝟵`) for visual punch. |
 | `bold_threshold_seconds` | integer | `300` | Countdown threshold in seconds under which clock digits turn bold. Keeps healthy caches sleek and non-bold, turning bold only when expiring. |
@@ -79,6 +79,18 @@ Supported agent keys: `agy` (Antigravity CLI), `claude` (Claude Code), `codex` (
     "show_percentage": false,
     "show_model": false,
     "ttl_ceiling": 3600
+  },
+  "claude": {
+    "enabled": true,
+    "cache_warmer_sessions": [],
+    "cache_warmer_margin_seconds": 60,
+    "cache_warmer_max_per_session": 0,
+    "show_deadline": true,
+    "show_read_tokens": true,
+    "show_write_tokens": false,
+    "show_percentage": false,
+    "show_model": false,
+    "ttl_ceiling": 3600
   }
 }
 ```
@@ -86,11 +98,11 @@ Supported agent keys: `agy` (Antigravity CLI), `claude` (Claude Code), `codex` (
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `enabled` | boolean | `true` | Enable cache tracking for this agent. Set `false` to clear this agent's cache token. |
-| `cache_warmer_sessions` | array of session IDs | `[]` | Codex and AGY. Sessions explicitly armed with `prefix+u`; each eligible session may receive a short normal turn near the current countdown deadline. The experimental turn is appended to the conversation. |
-| `cache_warmer_global_enabled` | boolean | `false` | When true, all Codex and AGY sessions are armed, including sessions opened later. `prefix+shift+u` toggles global mode; turning it off returns to the per-session settings. |
+| `cache_warmer_sessions` | array of session IDs | `[]` | Codex, AGY, and Claude. Sessions explicitly armed with `prefix+u`; each eligible session may receive a short normal turn near the current countdown deadline. The experimental turn is appended to the conversation. |
+| `cache_warmer_global_enabled` | boolean | `false` | When true, all Codex, AGY, and Claude sessions are armed, including sessions opened later. `prefix+shift+u` toggles global mode; turning it off returns to the per-session settings. |
 | `cache_warmer_global_excluded_sessions` | object of agent to session ID arrays | `{}` | Per-session exclusions while global mode is on. `prefix+u` toggles the focused session in or out of the global set. |
-| `cache_warmer_margin_seconds` | integer | Codex `300`, AGY `60` | Attempt a warm turn when the displayed cache countdown reaches this many seconds; accepted range is 30–600 seconds. |
-| `cache_warmer_max_per_session` | integer | `0` | Codex and AGY. `0` allows indefinite warming while the session is opted in; set 1–3 to cap warm-turn attempts per session. |
+| `cache_warmer_margin_seconds` | integer | Codex `300`, AGY and Claude `60` | Attempt a warm turn when the displayed cache countdown reaches this many seconds; accepted range is 30–600 seconds. Claude warming requires cache lifetime evidence from a 5-minute or 1-hour cache write. |
+| `cache_warmer_max_per_session` | integer | `0` | Codex, AGY, and Claude. `0` allows indefinite warming while the session is opted in; set 1–3 to cap warm-turn attempts per session. |
 | `show_deadline` | boolean | `true` | Include the estimated expiration countdown time (`~15:44`). |
 | `show_read_tokens` | boolean | `true` | Include read/cached tokens counter (e.g. `⇣95.4k`). |
 | `show_write_tokens`| boolean | `false` | Include cache-creation tokens counter (e.g. `⇡12.3k`). |
@@ -106,18 +118,20 @@ is still an estimate: cache misses can also result from a changed prompt prefix
 or routing, so it is not a guarantee of cache eviction time.
 
 The experimental warmer is off by default. When enabled, it sends a normal
-user turn through Herdr; this adds a short prompt and response to the Codex or
-AGY conversation and incurs that agent's normal usage. Before submission it
+user turn through Herdr; this adds a short prompt and response to the agent
+conversation and incurs that agent's normal usage. Before submission it
 rechecks the session, requires an idle or done status and an unfocused pane, and
 checks that the prompt is visibly empty (`Ask Codex to do anything` for Codex;
-a standalone `>` prompt for AGY). Working parents, including parents waiting on
+a standalone `>` prompt for AGY; an empty `❯` prompt for Claude). Claude cache
+warming follows the lifetime indicated by recorded 5-minute or 1-hour cache
+writes and uses a 60-second default margin. Working parents, including parents waiting on
 subagents, are skipped. Warmed intervals are excluded from survival observations.
 The status and empty-prompt checks are best effort and cannot make PTY submission
 atomic with a user switching focus or typing, so start with a disposable session.
 
-With the configured prefix (`Ctrl+B`), toggle warming for the focused Codex or AGY
+With the configured prefix (`Ctrl+B`), toggle warming for the focused Codex, AGY, or Claude
 session with `u`.
-Toggle global warming for all Codex and AGY sessions, including sessions opened later,
+Toggle global warming for all supported warmer sessions, including sessions opened later,
 with `Shift+U`. While global mode is on, `u` excludes or restores only the focused
 session. Turning global mode off restores the saved per-session settings. The active cache display gains the
 configured `cache_warmer_symbol` (default `↻`) immediately before the countdown
