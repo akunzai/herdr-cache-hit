@@ -43,6 +43,8 @@ If `config.json` does not exist, safe built-in defaults are used. Changes to `co
 | `expiring_symbol` | string | `"⏰"` | Symbol or emoji prepended when remaining cache lifetime is less than or equal to `expiring_threshold_seconds`. E.g. `"⏰"` or `"⚠️"`. |
 | `cold_symbol` | string | `"❄"` | Symbol shown immediately before retained token counts when the cache has expired. Set `""` to hide it. |
 | `cache_warmer_symbol` | string | `"↻"` | Symbol placed immediately before the countdown for an armed Codex, AGY, or Claude session. Set `""` to hide the indicator. |
+| `cache_warmer_allow_focused_pane` | boolean | `false` | Allow warming the currently focused pane. This only relaxes the focus guard; the session must still be opted in and confirmed idle. Per-agent values can override the root setting. |
+| `cache_warmer_allow_nonempty_prompt` | boolean | `false` | Allow warming when text is already present in the agent's prompt editor. This only relaxes the composer guard. Herdr submits the warm prompt through terminal input, so the existing draft may be submitted together with it. Per-agent values can override the root setting. |
 | `expiring_threshold_seconds`| integer | `300` | Warning threshold in seconds (default 5 minutes). At or below this, the warning symbol appears. |
 | `bold_time` | boolean | `true` | When `true`, converts countdown clock digits into Unicode mathematical sans-serif bold characters (`𝟬-𝟵`) for visual punch. |
 | `bold_threshold_seconds` | integer | `300` | Countdown threshold in seconds under which clock digits turn bold. Keeps healthy caches sleek and non-bold, turning bold only when expiring. |
@@ -61,6 +63,7 @@ Supported agent keys: `agy` (Antigravity CLI), `claude` (Claude Code), `codex` (
     "cache_warmer_sessions": [],
     "cache_warmer_margin_seconds": 300,
     "cache_warmer_max_per_session": 0,
+    "cache_warmer_duration_hours": 0,
     "show_deadline": true,
     "show_read_tokens": true,
     "show_write_tokens": false,
@@ -73,6 +76,7 @@ Supported agent keys: `agy` (Antigravity CLI), `claude` (Claude Code), `codex` (
     "cache_warmer_sessions": [],
     "cache_warmer_margin_seconds": 60,
     "cache_warmer_max_per_session": 0,
+    "cache_warmer_duration_hours": 0,
     "show_deadline": true,
     "show_read_tokens": true,
     "show_write_tokens": false,
@@ -85,6 +89,7 @@ Supported agent keys: `agy` (Antigravity CLI), `claude` (Claude Code), `codex` (
     "cache_warmer_sessions": [],
     "cache_warmer_margin_seconds": 60,
     "cache_warmer_max_per_session": 0,
+    "cache_warmer_duration_hours": 0,
     "show_deadline": true,
     "show_read_tokens": true,
     "show_write_tokens": false,
@@ -103,6 +108,7 @@ Supported agent keys: `agy` (Antigravity CLI), `claude` (Claude Code), `codex` (
 | `cache_warmer_global_excluded_sessions` | object of agent to session ID arrays | `{}` | Per-session exclusions while global mode is on. `prefix+u` toggles the focused session in or out of the global set. |
 | `cache_warmer_margin_seconds` | integer | Codex `300`, AGY and Claude `60` | Attempt a warm turn when the displayed cache countdown reaches this many seconds; accepted range is 30–600 seconds. Claude warming requires cache lifetime evidence from a 5-minute or 1-hour cache write. |
 | `cache_warmer_max_per_session` | integer | `0` | Codex, AGY, and Claude. `0` allows indefinite warming while the session is opted in; set 1–3 to cap warm-turn attempts per session. |
+| `cache_warmer_duration_hours` | integer | `0` | Codex, AGY, and Claude. `0` allows indefinite warming; set `1`–`8760` to stop warming that session this many hours after its first warmer attempt. Applies at the root or per-agent level. |
 | `show_deadline` | boolean | `true` | Include the estimated expiration countdown time (`~15:44`). |
 | `show_read_tokens` | boolean | `true` | Include read/cached tokens counter (e.g. `⇣95.4k`). |
 | `show_write_tokens`| boolean | `false` | Include cache-creation tokens counter (e.g. `⇡12.3k`). |
@@ -120,14 +126,18 @@ or routing, so it is not a guarantee of cache eviction time.
 The experimental warmer is off by default. When enabled, it sends a normal
 user turn through Herdr; this adds a short prompt and response to the agent
 conversation and incurs that agent's normal usage. Before submission it
-rechecks the session, requires an idle or done status and an unfocused pane, and
-checks that the prompt is visibly empty (`Ask Codex to do anything` for Codex;
-a standalone `>` prompt for AGY; an empty `❯` prompt for Claude). Claude cache
+rechecks the session and requires an idle or done status plus an idle harness
+activity signal. By default the pane must be unfocused and the prompt editor
+empty (`Ask Codex to do anything` for Codex; a standalone `>` prompt for AGY;
+an empty `❯` prompt for Claude). The two `cache_warmer_allow_*` settings can
+independently relax those last two guards; unknown activity state still skips.
+Claude cache
 warming follows the lifetime indicated by recorded 5-minute or 1-hour cache
 writes and uses a 60-second default margin. Working parents, including parents waiting on
 subagents, are skipped. Warmed intervals are excluded from survival observations.
-The status and empty-prompt checks are best effort and cannot make PTY submission
-atomic with a user switching focus or typing, so start with a disposable session.
+Status and prompt checks cannot make PTY submission atomic with concurrent user
+input. Enabling nonempty-prompt warming may submit the existing draft together
+with the warm prompt, so enable it only when that behavior is acceptable.
 
 With the configured prefix (`Ctrl+B`), toggle warming for the focused Codex, AGY, or Claude
 session with `u`.
@@ -135,9 +145,13 @@ Toggle global warming for all supported warmer sessions, including sessions open
 with `Shift+U`. While global mode is on, `u` excludes or restores only the focused
 session. Turning global mode off restores the saved per-session settings. The active cache display gains the
 configured `cache_warmer_symbol` (default `↻`) immediately before the countdown
-when that session is armed. A warm turn is sent only if the pane is idle, unfocused,
-and its prompt editor is empty when the estimated deadline nears. Each toggle
+when that session is armed. A warm turn is sent only if the pane is idle and
+the estimated deadline nears; focus and prompt-editor requirements follow the
+two independent `cache_warmer_allow_*` settings. Each toggle
 also shows a quiet Herdr notification describing the resulting setting.
+By default, warming continues indefinitely. A finite `cache_warmer_duration_hours`
+starts at the first warmer attempt for each session; after that duration, the
+session is no longer warmed and its armed marker disappears.
 
 ---
 

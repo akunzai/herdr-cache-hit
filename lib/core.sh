@@ -31,6 +31,10 @@ warm_epoch_path() {
   local agent=$1 session_id=$2
   printf '%s/%s-warm-epoch-%s\n' "$STATE_DIR" "$agent" "${session_id//[^A-Za-z0-9_.-]/_}"
 }
+warm_started_path() {
+  local agent=$1 session_id=$2
+  printf '%s/%s-warm-started-%s\n' "$STATE_DIR" "$agent" "${session_id//[^A-Za-z0-9_.-]/_}"
+}
 state_path() { printf '%s/state-%s.json\n' "$STATE_DIR" "${1//[^A-Za-z0-9_.-]/_}"; }
 warmer_enabled_for_session() {
   local agent=$1 session_id=$2
@@ -41,7 +45,31 @@ warmer_enabled_for_session() {
     else
       ((.[$agent].cache_warmer_sessions // []) | index($sid)) != null
     end
-  ' "$CONFIG_FILE" >/dev/null 2>&1
+  ' "$CONFIG_FILE" >/dev/null 2>&1 || return 1
+
+  local duration started now count
+  duration=$(config_int "$agent" cache_warmer_duration_hours 0)
+  # Bound arithmetic and treat malformed values as the documented unlimited default.
+  (( duration <= 8760 )) || duration=0
+  (( duration > 0 )) || return 0
+
+  local started_path
+  started_path=$(warm_started_path "$agent" "$session_id")
+  started=$(cat "$started_path" 2>/dev/null || true)
+  if [[ "$started" =~ ^[0-9]+$ ]]; then
+    now=$(date +%s)
+    (( now < started + duration * 3600 ))
+    return $?
+  fi
+
+  # Existing sessions that were already warmed before this option was added
+  # begin their duration when the finite limit is first observed.
+  count=$(cat "$(warm_count_path "$agent" "$session_id")" 2>/dev/null || printf 0)
+  if [[ "$count" =~ ^[0-9]+$ ]] && (( count > 0 )); then
+    mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+    date +%s >"$started_path" || return 1
+  fi
+  return 0
 }
 next_wake_delay() {
   local active=${1:-0} transition=${2:-} delay=$ACTIVE_RESCAN_SECONDS

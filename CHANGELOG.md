@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-10-04
+### Added
+- Add an optional per-session warmer duration in hours; `0` keeps the default unlimited behavior.
+- Add independent opt-ins to warm a focused pane or a pane with an existing prompt draft; both remain off by default.
+### Changed
+- Require transcript lifecycle evidence that Codex, Claude, and AGY are idle before warming; unknown activity state skips the attempt.
+- Detect unfinished delegated tasks in AGY transcripts even when Herdr reports the foreground turn as done.
+
 ## [0.1.10] - 2026-10-03
 ### Added
 - Add optional Codex and AGY cache warming with per-session and global toggles, visible status markers, and quiet Herdr notifications.

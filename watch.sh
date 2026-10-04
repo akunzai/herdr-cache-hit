@@ -12,6 +12,8 @@ PLUGIN_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 . "$PLUGIN_DIR/lib/claude.sh"
 # shellcheck source=lib/opencode.sh
 . "$PLUGIN_DIR/lib/opencode.sh"
+# shellcheck source=lib/activity.sh
+. "$PLUGIN_DIR/lib/activity.sh"
 # shellcheck source=lib/cache.sh
 . "$PLUGIN_DIR/lib/cache.sh"
 

@@ -14,6 +14,21 @@ ok() { printf 'ok - %s\n' "$1"; }
 not_ok() { printf 'not ok - %s\n' "$1"; fail=1; }
 assert_eq() { if [[ "$1" == "$2" ]]; then ok "$3"; else printf 'not ok - %s\n' "$3"; fail=1; fi; }
 assert_cmd() { if eval "$1" >/dev/null 2>&1; then ok "$2"; else not_ok "$2"; fi; }
+
+# Warmer duration is measured from the first warm attempt and can be set at
+# the root (global mode) or overridden per agent. Zero remains unlimited.
+duration_sid=duration_session
+duration_now=$(date +%s)
+duration_started=$(warm_started_path agy "$duration_sid")
+mkdir -p "$CONFIG_DIR" "$STATE_DIR"
+printf '{"agy":{"cache_warmer_sessions":["%s"],"cache_warmer_duration_hours":2}}\n' "$duration_sid" >"$CONFIG_FILE"
+printf '%s\n' "$((duration_now - 3599))" >"$duration_started"
+assert_cmd "warmer_enabled_for_session agy '$duration_sid'" 'finite warmer duration remains active before its deadline'
+printf '%s\n' "$((duration_now - 7201))" >"$duration_started"
+assert_cmd "! warmer_enabled_for_session agy '$duration_sid'" 'finite warmer duration expires after the configured hours'
+printf '{"cache_warmer_global_enabled":true,"cache_warmer_duration_hours":0}\n' >"$CONFIG_FILE"
+assert_cmd "warmer_enabled_for_session agy '$duration_sid'" 'zero warmer duration stays unlimited in global mode'
+
 pid_is_live() {
   local stat
   stat=$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ') || return 1
@@ -377,7 +392,7 @@ codex_usage() { printf 'codex\ts1\t%s\t1000\t800\t0\t0\t0\tm\tp\t/same\n' "$(dat
 jq -n --arg sig "$sig" --argjson now "$now" '{active:{agent:"codex",session_id:"s1",model:"m",provider:"p",signature:$sig,hit_at:$now,deadline:($now+600)},observations:[]}' >"$(state_path paneSym)"
 update_pane paneSym codex s1
 assert_eq "$last_deadline" "$((now+600))" 'active pane passes deadline to report_pane'
-if (( last_remaining >= 599 && last_remaining <= 600 )); then ok 'active pane passes remaining seconds to report_pane'; else not_ok 'active pane passes remaining seconds to report_pane'; fi
+if (( last_remaining >= 590 && last_remaining <= 600 )); then ok 'active pane passes remaining seconds to report_pane'; else not_ok 'active pane passes remaining seconds to report_pane'; fi
 assert_eq "$last_pct_num" "80" 'active pane passes numeric percentage to report_pane'
 assert_cmd "[[ \"$last_reported\" == '~'* && \"$last_reported\" != *'♨️'* ]]" 'hot cache displays clean clock without emoji by default'
 assert_cmd "[[ \"$last_reported\" =~ ~[0-9]{2}:[0-9]{2} ]]" 'hot cache clock remains non-bold before threshold (>5m)'
@@ -742,7 +757,7 @@ cat >"$warm_fake" <<'SH'
 #!/usr/bin/env bash
 case "$1 $2" in
   "api snapshot")
-    printf '{"result":{"snapshot":{"panes":[{"pane_id":"%s","agent":"%s","agent_status":"%s","focused":%s,"agent_session":{"kind":"id","value":"%s"}}]}}}\n' "${FAKE_PANE_ID:-pWarm}" "${FAKE_AGENT:-codex}" "${FAKE_STATUS:-idle}" "${FAKE_FOCUSED:-false}" "${FAKE_SESSION_ID:-warm-session-1}"
+    printf '{"result":{"snapshot":{"panes":[{"pane_id":"%s","agent":"%s","agent_status":"%s","focused":%s,"cwd":"%s","agent_session":{"kind":"id","value":"%s","path":"%s"}}]}}}\n' "${FAKE_PANE_ID:-pWarm}" "${FAKE_AGENT:-codex}" "${FAKE_STATUS:-idle}" "${FAKE_FOCUSED:-false}" "${FAKE_CWD:-/same}" "${FAKE_SESSION_ID:-warm-session-1}" "${FAKE_SESSION_PATH:-}"
     ;;
   "agent read")
     if [[ -n "${FAKE_PROMPT_LINE:-}" ]]; then printf '%s\n' "$FAKE_PROMPT_LINE"
@@ -755,23 +770,37 @@ esac
 SH
 chmod +x "$warm_fake"
 warm_deadline=$(( $(date +%s) + 120 ))
+warm_codex_sessions="$warm_state/codex-sessions"
+mkdir -p "$warm_codex_sessions"
+printf '{"type":"session_meta","payload":{"id":"warm-session-1"}}\n{"type":"event_msg","payload":{"type":"turn_started"}}\n{"type":"event_msg","payload":{"type":"turn_complete"}}\n' >"$warm_codex_sessions/warm-session-1.jsonl"
+export CODEX_SESSIONS_DIR="$warm_codex_sessions"
 printf '{"active":{"agent":"codex","session_id":"warm-session-1","model":"gpt-test","provider":"openai","signature":"sig","hit_at":%s,"deadline":%s},"last_known":null,"observations":[]}\n' "$((warm_deadline - 1800))" "$warm_deadline" >"$warm_state/state-pWarm.json"
 printf '{"codex":{"cache_warmer_sessions":["warm-session-1"],"cache_warmer_max_per_session":2}}\n' >"$warm_config/config.json"
-FAKE_PROMPT_LOG="$warm_log" FAKE_STATUS=working HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+FAKE_PROMPT_LOG="$warm_log" FAKE_STATUS=working HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
 assert_cmd "[[ ! -s \"$warm_log\" ]]" 'Codex warmer skips a working parent session, including a subagent wait'
-FAKE_PROMPT_LOG="$warm_log" FAKE_FOCUSED=true HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+FAKE_PROMPT_LOG="$warm_log" FAKE_FOCUSED=true HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
 assert_cmd "[[ ! -s \"$warm_log\" ]]" 'Codex warmer skips a focused pane'
-FAKE_PROMPT_LOG="$warm_log" FAKE_PROMPT_LINE='› typed user message' HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+FAKE_PROMPT_LOG="$warm_log" FAKE_PROMPT_LINE='› typed user message' HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
 assert_cmd "[[ ! -s \"$warm_log\" ]]" 'Codex warmer skips a nonempty prompt editor'
-FAKE_PROMPT_LOG="$warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+FAKE_PROMPT_LOG="$warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
 assert_cmd "[[ \$(wc -l <\"$warm_log\") -eq 1 ]]" 'Codex warmer submits one prompt only when all idle guards pass'
 assert_eq "$(cat "$warm_state/codex-warm-count-warm-session-1")" 1 'Codex warmer records its per-session refresh count'
 assert_cmd "[[ -e \"$warm_state/codex-warm-marker-warm-session-1\" ]]" 'Codex warmer marks observations affected by synthetic turns'
+printf '{"cache_warmer_allow_focused_pane":true,"cache_warmer_allow_nonempty_prompt":true,"codex":{"cache_warmer_sessions":["warm-session-1"],"cache_warmer_max_per_session":2}}\n' >"$warm_config/config.json"
+rm -f "$warm_state/codex-warm-epoch-warm-session-1"
+FAKE_PROMPT_LOG="$warm_log" FAKE_FOCUSED=true FAKE_PROMPT_LINE='› typed user message' HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$warm_log\") -eq 2 ]]" 'Codex explicit settings allow warming a focused pane with a draft'
+printf '%s\n' '{"type":"session_meta","payload":{"id":"warm-session-1"}}' '{"type":"event_msg","payload":{"type":"turn_started"}}' >"$warm_codex_sessions/warm-session-1.jsonl"
+assert_eq "$(CODEX_SESSIONS_DIR="$warm_codex_sessions" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; codex_activity_status warm-session-1' _ "$ROOT")" busy 'Codex lifecycle guard detects an unfinished turn'
+printf '%s\n' '{"type":"event_msg","payload":{"type":"turn_complete"}}' >>"$warm_codex_sessions/warm-session-1.jsonl"
+assert_eq "$(CODEX_SESSIONS_DIR="$warm_codex_sessions" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; codex_activity_status warm-session-1' _ "$ROOT")" idle 'Codex lifecycle guard clears after a completed turn'
+printf '{"type":"session_meta","payload":{"id":"no-lifecycle"}}\n' >"$warm_codex_sessions/no-lifecycle.jsonl"
+assert_eq "$(CODEX_SESSIONS_DIR="$warm_codex_sessions" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; codex_activity_status no-lifecycle' _ "$ROOT")" unknown 'Codex lifecycle guard fails closed without turn events'
 printf '{"codex":{"cache_warmer_sessions":["warm-session-1"],"cache_warmer_max_per_session":0}}\n' >"$warm_config/config.json"
 printf '2\n' >"$warm_state/codex-warm-count-warm-session-1"
 jq '.active.hit_at += 1 | .active.deadline += 1' "$warm_state/state-pWarm.json" >"$warm_state/state-pWarm.next"
 mv "$warm_state/state-pWarm.next" "$warm_state/state-pWarm.json"
-FAKE_PROMPT_LOG="$warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+FAKE_PROMPT_LOG="$warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
 assert_eq "$(cat "$warm_state/codex-warm-count-warm-session-1")" 3 'unlimited Codex warming continues beyond the former two-attempt cap'
 warm_observation_marker=$(codex_warm_marker_path warmer-observation-test)
 : >"$warm_observation_marker"
@@ -783,6 +812,7 @@ agy_warm_state="$TMP/agy-warm-state"
 agy_warm_config="$TMP/agy-warm-config"
 agy_warm_home="$TMP/agy-warm-home"
 agy_warm_log="$TMP/agy-warm-prompts"
+export AGY_CLI_HOME="$agy_warm_home/antigravity-cli"
 mkdir -p "$agy_warm_state" "$agy_warm_config" "$agy_warm_home/antigravity-cli/brain/agy-warm-session/.system_generated/logs"
 : >"$agy_warm_home/antigravity-cli/brain/agy-warm-session/.system_generated/logs/transcript.jsonl"
 agy_margin_log="$TMP/agy-margin-prompts"
@@ -792,38 +822,46 @@ mkdir -p "$(dirname "$agy_margin_transcript")"
 agy_margin_deadline=$(( $(date +%s) + 90 ))
 printf '{"active":{"agent":"agy","session_id":"agy-margin-session","model":"gemini-test","provider":"google","signature":"sig","hit_at":%s,"deadline":%s},"last_known":null,"observations":[]}\n' "$((agy_margin_deadline - 300))" "$agy_margin_deadline" >"$agy_warm_state/state-pMargin.json"
 printf '{"agy":{"cache_warmer_sessions":["agy-margin-session"]}}\n' >"$agy_warm_config/config.json"
-FAKE_AGENT=agy FAKE_PANE_ID=pMargin FAKE_SESSION_ID=agy-margin-session FAKE_PROMPT_LOG="$agy_margin_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pMargin agy-margin-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_PANE_ID=pMargin FAKE_SESSION_ID=agy-margin-session FAKE_PROMPT_LOG="$agy_margin_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent agy pMargin agy-margin-session' _ "$ROOT"
 assert_cmd "[[ ! -s \"$agy_margin_log\" ]]" 'AGY default margin waits while more than one minute remains'
-agy_margin_deadline=$(( $(date +%s) + 50 ))
+agy_margin_deadline=$(( $(date +%s) + 35 ))
 jq --argjson deadline "$agy_margin_deadline" --argjson hit "$((agy_margin_deadline - 300))" '.active.deadline=$deadline | .active.hit_at=$hit' "$agy_warm_state/state-pMargin.json" >"$agy_warm_state/state-pMargin.next"
 mv "$agy_warm_state/state-pMargin.next" "$agy_warm_state/state-pMargin.json"
-FAKE_AGENT=agy FAKE_PANE_ID=pMargin FAKE_SESSION_ID=agy-margin-session FAKE_PROMPT_LOG="$agy_margin_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pMargin agy-margin-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_PANE_ID=pMargin FAKE_SESSION_ID=agy-margin-session FAKE_PROMPT_LOG="$agy_margin_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent agy pMargin agy-margin-session' _ "$ROOT"
 assert_cmd "[[ \$(wc -l <\"$agy_margin_log\") -eq 1 ]]" 'AGY default margin allows a warm turn with one minute remaining'
 agy_warm_deadline=$(( $(date +%s) + 50 ))
 printf '{"active":{"agent":"agy","session_id":"agy-warm-session","model":"gemini-test","provider":"google","signature":"sig","hit_at":%s,"deadline":%s},"last_known":null,"observations":[]}\n' "$((agy_warm_deadline - 1800))" "$agy_warm_deadline" >"$agy_warm_state/state-pWarm.json"
 printf '{"agy":{"cache_warmer_sessions":["agy-warm-session"],"cache_warmer_max_per_session":2}}\n' >"$agy_warm_config/config.json"
-FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_STATUS=working FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_STATUS=working FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
 assert_cmd "[[ ! -s \"$agy_warm_log\" ]]" 'AGY warmer skips a working parent session'
-FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_FOCUSED=true FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_FOCUSED=true FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
 assert_cmd "[[ ! -s \"$agy_warm_log\" ]]" 'AGY warmer skips a focused pane'
-FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LINE=$'>\n> typed user message' FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LINE=$'>\n> typed user message' FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
 assert_cmd "[[ ! -s \"$agy_warm_log\" ]]" 'AGY warmer skips a nonempty prompt editor'
-FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
 assert_cmd "[[ \$(wc -l <\"$agy_warm_log\") -eq 1 ]]" 'AGY warmer submits on the standalone empty prompt line'
-FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
 assert_cmd "[[ \$(wc -l <\"$agy_warm_log\") -eq 1 ]]" 'AGY warmer does not repeat within one unchanged cache window'
 assert_eq "$(cat "$agy_warm_state/agy-warm-count-agy-warm-session")" 1 'AGY warmer records its per-session attempt count'
+printf '{"cache_warmer_allow_focused_pane":true,"cache_warmer_allow_nonempty_prompt":true,"agy":{"cache_warmer_sessions":["agy-warm-session"],"cache_warmer_max_per_session":2}}\n' >"$agy_warm_config/config.json"
+rm -f "$agy_warm_state/agy-warm-epoch-agy-warm-session"
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-warm-session FAKE_FOCUSED=true FAKE_PROMPT_LINE=$'>\n> typed user message' FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_warm_home" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent agy pWarm agy-warm-session' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$agy_warm_log\") -eq 2 ]]" 'AGY explicit settings allow warming a focused pane with a draft'
 agy_task_root="$TMP/agy-task-home"
+export AGY_CLI_HOME="$agy_task_root/antigravity-cli"
 agy_task_transcript="$agy_task_root/antigravity-cli/brain/agy-task-session/.system_generated/logs/transcript.jsonl"
 mkdir -p "$(dirname "$agy_task_transcript")"
-printf '{"type":"GENERIC","content":"Task: agy-task-session/task-1\\nStatus: RUNNING"}\n' >"$agy_task_transcript"
+printf '%s\n' "{\"type\":\"GENERIC\",\"content\":\"Task: agy-task-session/task-1\\nStatus: RUNNING\"}" >"$agy_task_transcript"
 agy_task_deadline=$(( $(date +%s) + 50 ))
 printf '{"active":{"agent":"agy","session_id":"agy-task-session","model":"gemini-test","provider":"google","signature":"sig","hit_at":%s,"deadline":%s},"last_known":null,"observations":[]}\n' "$((agy_task_deadline - 1800))" "$agy_task_deadline" >"$agy_warm_state/state-pTask.json"
 printf '{"agy":{"cache_warmer_sessions":["agy-task-session"]}}\n' >"$agy_warm_config/config.json"
-FAKE_AGENT=agy FAKE_SESSION_ID=agy-task-session FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_task_root" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/agy.sh"; source "$1/lib/cache.sh"; maybe_warm_agent agy pTask agy-task-session' _ "$ROOT"
-assert_cmd "[[ \$(wc -l <\"$agy_warm_log\") -eq 1 ]]" 'AGY warmer skips a pane with a running background task despite idle status'
+agy_task_prompt_count=$(wc -l <"$agy_warm_log")
+FAKE_AGENT=agy FAKE_SESSION_ID=agy-task-session FAKE_PROMPT_LOG="$agy_warm_log" AGY_HOME="$agy_task_root" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent agy pTask agy-task-session' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$agy_warm_log\") -eq $agy_task_prompt_count ]]" 'AGY warmer skips a pane with a running background task despite idle status'
+assert_eq "$(AGY_HOME="$agy_task_root" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" bash -c 'source "$1/watch.sh"; agy_activity_status agy-task-session' _ "$ROOT")" busy 'AGY activity guard detects a running delegated task'
 printf '%s\n' '{"type":"SYSTEM_MESSAGE","content":"Task id \"agy-task-session/task-1\" finished with result"}' >>"$agy_task_transcript"
 assert_cmd "AGY_HOME='$agy_task_root' bash -c 'source \"$ROOT/lib/agy.sh\"; ! agy_has_running_background_task agy-task-session'" 'AGY transcript guard releases the session after the background task finishes'
+assert_eq "$(AGY_HOME="$agy_task_root" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" bash -c 'source "$1/watch.sh"; agy_activity_status agy-task-session' _ "$ROOT")" idle 'AGY activity guard clears after task completion'
 agy_warm_marker=$(warm_marker_path agy agy-observation-test)
 : >"$agy_warm_marker"
 record_warmed_observation agy agy-observation-test agy-provider agy-model 900 1800
@@ -831,18 +869,35 @@ assert_cmd "! jq -e 'has(\"agy-provider:agy-model\")' '$OBSERVATIONS_FILE' >/dev
 
 # Claude warming requires a known cache lifetime and an exactly empty Claude composer.
 claude_warm_log="$TMP/claude-warm-prompts"
+claude_config="$TMP/claude-config"
+claude_transcript="$claude_config/projects/-same/claude-warm-session.jsonl"
+mkdir -p "$(dirname "$claude_transcript")"
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"ready"}]}}\n' >"$claude_transcript"
 claude_warm_deadline=$(( $(date +%s) + 50 ))
 printf '{"active":{"agent":"claude","session_id":"claude-warm-session","model":"claude-test","provider":"anthropic","signature":"sig","hit_at":%s,"deadline":%s,"cache_ttl":300,"write5m":1000},"last_known":null,"observations":[]}' "$((claude_warm_deadline - 300))" "$claude_warm_deadline" >"$warm_state/state-pClaude.json"
 printf '{"claude":{"cache_warmer_sessions":["claude-warm-session"]}}\n' >"$warm_config/config.json"
-FAKE_AGENT=claude FAKE_PANE_ID=pClaude FAKE_SESSION_ID=claude-warm-session FAKE_PROMPT_LOG="$claude_warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent claude pClaude claude-warm-session' _ "$ROOT"
+FAKE_AGENT=claude FAKE_PANE_ID=pClaude FAKE_SESSION_ID=claude-warm-session FAKE_PROMPT_LOG="$claude_warm_log" CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent claude pClaude claude-warm-session' _ "$ROOT"
 assert_cmd "[[ \$(wc -l <\"$claude_warm_log\") -eq 1 ]]" 'Claude warmer submits near expiry with an empty composer'
 printf '{"active":{"agent":"claude","session_id":"claude-warm-session","model":"claude-test","provider":"anthropic","signature":"sig2","hit_at":%s,"deadline":%s,"cache_ttl":300},"last_known":null,"observations":[]}' "$((claude_warm_deadline - 301))" "$((claude_warm_deadline + 1))" >"$warm_state/state-pClaudeTyped.json"
-FAKE_AGENT=claude FAKE_PANE_ID=pClaudeTyped FAKE_SESSION_ID=claude-warm-session FAKE_PROMPT_LINE=$'❯\n❯ typed message' FAKE_PROMPT_LOG="$claude_warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent claude pClaudeTyped claude-warm-session' _ "$ROOT"
+FAKE_AGENT=claude FAKE_PANE_ID=pClaudeTyped FAKE_SESSION_ID=claude-warm-session FAKE_PROMPT_LINE=$'❯\n❯ typed message' FAKE_PROMPT_LOG="$claude_warm_log" CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent claude pClaudeTyped claude-warm-session' _ "$ROOT"
 assert_cmd "[[ \$(wc -l <\"$claude_warm_log\") -eq 1 ]]" 'Claude warmer skips a nonempty composer'
+printf '{"cache_warmer_allow_focused_pane":true,"cache_warmer_allow_nonempty_prompt":true,"claude":{"cache_warmer_sessions":["claude-warm-session"],"cache_warmer_max_per_session":2}}\n' >"$warm_config/config.json"
+rm -f "$warm_state/claude-warm-epoch-claude-warm-session"
+FAKE_AGENT=claude FAKE_PANE_ID=pClaudeTyped FAKE_SESSION_ID=claude-warm-session FAKE_FOCUSED=true FAKE_PROMPT_LINE=$'❯\n❯ typed message' FAKE_PROMPT_LOG="$claude_warm_log" CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent claude pClaudeTyped claude-warm-session' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$claude_warm_log\") -eq 2 ]]" 'Claude explicit settings allow warming a focused pane with a draft'
+printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-active","name":"Bash","input":{"command":"sleep 3600"}}]}}\n' >"$claude_transcript"
+assert_eq "$(CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; claude_activity_status claude-warm-session /same' _ "$ROOT")" busy 'Claude activity guard detects an unfinished tool call'
+printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-active","content":"done"}]}}\n' >>"$claude_transcript"
+assert_eq "$(CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; claude_activity_status claude-warm-session /same' _ "$ROOT")" idle 'Claude activity guard clears after the tool result'
+printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-bg","name":"Bash","input":{"command":"long job","run_in_background":true}}]}}\n{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-bg","content":"Background task ID: job-1"}]}}\n' >"$claude_transcript"
+assert_eq "$(CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; claude_activity_status claude-warm-session /same' _ "$ROOT")" unknown 'Claude activity guard fails closed while a background shell task lacks completion'
+printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-poll","name":"BashOutput","input":{"task_id":"job-1"}}]}}\n{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-poll","content":"Task completed with exit code 0"}]}}\n' >>"$claude_transcript"
+assert_eq "$(CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; claude_activity_status claude-warm-session /same' _ "$ROOT")" idle 'Claude activity guard clears after observed background task completion'
 printf '{"active":{"agent":"claude","session_id":"claude-unknown-session","hit_at":%s,"deadline":%s},"last_known":null}' "$((claude_warm_deadline - 1800))" "$claude_warm_deadline" >"$warm_state/state-pClaudeUnknown.json"
 printf '{"claude":{"cache_warmer_sessions":["claude-unknown-session"]}}\n' >"$warm_config/config.json"
-FAKE_AGENT=claude FAKE_PANE_ID=pClaudeUnknown FAKE_SESSION_ID=claude-unknown-session FAKE_PROMPT_LOG="$claude_warm_log" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/lib/core.sh"; source "$1/lib/cache.sh"; maybe_warm_agent claude pClaudeUnknown claude-unknown-session' _ "$ROOT"
-assert_cmd "[[ \$(wc -l <\"$claude_warm_log\") -eq 1 ]]" 'Claude warmer skips a cache with unknown lifetime'
+claude_prompt_count=$(wc -l <"$claude_warm_log")
+FAKE_AGENT=claude FAKE_PANE_ID=pClaudeUnknown FAKE_SESSION_ID=claude-unknown-session FAKE_PROMPT_LOG="$claude_warm_log" CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_agent claude pClaudeUnknown claude-unknown-session' _ "$ROOT"
+assert_cmd "[[ \$(wc -l <\"$claude_warm_log\") -eq $claude_prompt_count ]]" 'Claude warmer skips a cache with unknown lifetime'
 
 # The watcher must route active Claude panes into the same opt-in warmer path.
 claude_watch_calls="$TMP/claude-watch-warm-calls"

@@ -428,10 +428,11 @@ maybe_warm_agent() {
 
   max_count=$(config_int "$agent" cache_warmer_max_per_session 0)
   (( max_count == 0 || (max_count >= 1 && max_count <= 3) )) || max_count=0
-  local count_path marker_path epoch_path epoch hit_at
+  local count_path marker_path epoch_path started_path epoch hit_at duration
   count_path=$(warm_count_path "$agent" "$session_id")
   marker_path=$(warm_marker_path "$agent" "$session_id")
   epoch_path=$(warm_epoch_path "$agent" "$session_id")
+  started_path=$(warm_started_path "$agent" "$session_id")
   hit_at=$(jq -r '.active.hit_at // 0' "$state" 2>/dev/null)
   epoch="$hit_at:$deadline"
   [[ "$(cat "$epoch_path" 2>/dev/null)" != "$epoch" ]] || return 0
@@ -440,26 +441,31 @@ maybe_warm_agent() {
   (( max_count == 0 || count < max_count )) || return 0
 
   # Check current identity, idle state, and focus immediately before touching the PTY.
-  local snapshot still_safe screen last_prompt
+  local snapshot pane_state pane_focused pane_cwd pane_session_path screen last_prompt activity
   snapshot=$("$HERDR_BIN" api snapshot 2>/dev/null) || return 0
-  still_safe=$(jq -r --arg pane "$pane" --arg agent "$agent" --arg sid "$session_id" '
+  pane_state=$(jq -r --arg pane "$pane" --arg agent "$agent" --arg sid "$session_id" '
     [.result.snapshot.panes[]? | select(.pane_id == $pane and .agent == $agent and .agent_session.kind == "id" and .agent_session.value == $sid)] as $p |
-    if ($p | length) == 1 then (($p[0].agent_status == "idle" or $p[0].agent_status == "done") and $p[0].focused == false) else false end
+    if ($p | length) == 1 then [($p[0].agent_status // "unknown"), (if ($p[0].focused | type) == "boolean" then $p[0].focused else true end), ($p[0].cwd // $p[0].foreground_cwd // ""), ($p[0].agent_session.path // $p[0].agent_session.agent_session_path // "")] | @tsv else empty end
   ' <<<"$snapshot" 2>/dev/null) || return 0
-  [[ "$still_safe" == true ]] || return 0
+  [[ -n "$pane_state" ]] || return 0
+  IFS=$'\t' read -r pane_state pane_focused pane_cwd pane_session_path <<<"$pane_state"
+  [[ "$pane_state" == idle || "$pane_state" == "done" ]] || return 0
+  if [[ "$pane_focused" == true ]] && [[ "$(config_bool "$agent" cache_warmer_allow_focused_pane false)" != true ]]; then return 0; fi
+  activity=$(agent_activity_status "$agent" "$session_id" "$pane_cwd" "$pane_session_path") || activity=unknown
+  [[ "$activity" == idle ]] || return 0
   screen=$("$HERDR_BIN" agent read "$pane" --source recent --lines 12 2>/dev/null) || return 0
   case "$agent" in
     codex)
       last_prompt=$(printf '%s\n' "$screen" | sed -n '/›/p' | tail -n 1 | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//')
-      [[ "$last_prompt" == '› Ask Codex to do anything' ]] || return 0
+      if [[ "$last_prompt" != '› Ask Codex to do anything' ]] && [[ "$(config_bool "$agent" cache_warmer_allow_nonempty_prompt false)" != true ]]; then return 0; fi
       ;;
     agy)
       last_prompt=$(printf '%s\n' "$screen" | sed -n -E '/^[[:space:]]*>/p' | tail -n 1 | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//')
-      [[ "$last_prompt" == '>' ]] || return 0
+      if [[ "$last_prompt" != '>' ]] && [[ "$(config_bool "$agent" cache_warmer_allow_nonempty_prompt false)" != true ]]; then return 0; fi
       ;;
     claude)
       last_prompt=$(printf '%s\n' "$screen" | sed -n -E '/^[[:space:]]*❯/p' | tail -n 1 | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//')
-      [[ "$last_prompt" == '❯' ]] || return 0
+      if [[ "$last_prompt" != '❯' ]] && [[ "$(config_bool "$agent" cache_warmer_allow_nonempty_prompt false)" != true ]]; then return 0; fi
       ;;
   esac
 
@@ -469,6 +475,11 @@ maybe_warm_agent() {
   : >"$marker_path" || return 0
   printf '%s\n' "$epoch" >"$epoch_path.tmp" || return 0
   atomic_install "$epoch_path.tmp" "$epoch_path" || return 0
+  duration=$(config_int "$agent" cache_warmer_duration_hours 0)
+  (( duration <= 8760 )) || duration=0
+  if (( duration > 0 )) && [[ ! -s "$started_path" ]]; then
+    date +%s >"$started_path" || return 0
+  fi
   local prompt='Cache warm check only: do not use tools or inspect or change anything. Reply with exactly: cache warm.'
   "$HERDR_BIN" agent prompt "$pane" "$prompt" --wait --timeout 120000 >/dev/null 2>&1 || true
 }
