@@ -794,6 +794,10 @@ printf '%s\n' '{"type":"session_meta","payload":{"id":"warm-session-1"}}' '{"typ
 assert_eq "$(CODEX_SESSIONS_DIR="$warm_codex_sessions" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; codex_activity_status warm-session-1' _ "$ROOT")" busy 'Codex lifecycle guard detects an unfinished turn'
 printf '%s\n' '{"type":"event_msg","payload":{"type":"turn_complete"}}' >>"$warm_codex_sessions/warm-session-1.jsonl"
 assert_eq "$(CODEX_SESSIONS_DIR="$warm_codex_sessions" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; codex_activity_status warm-session-1' _ "$ROOT")" idle 'Codex lifecycle guard clears after a completed turn'
+printf '%s\n' '{"type":"session_meta","payload":{"id":"warm-session-1"}}' '{"type":"event_msg","payload":{"type":"task_started"}}' >"$warm_codex_sessions/warm-session-1.jsonl"
+assert_eq "$(CODEX_SESSIONS_DIR="$warm_codex_sessions" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; codex_activity_status warm-session-1' _ "$ROOT")" busy 'Codex lifecycle guard detects current task_started events'
+printf '%s\n' '{"type":"event_msg","payload":{"type":"task_complete"}}' >>"$warm_codex_sessions/warm-session-1.jsonl"
+assert_eq "$(CODEX_SESSIONS_DIR="$warm_codex_sessions" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; codex_activity_status warm-session-1' _ "$ROOT")" idle 'Codex lifecycle guard clears after current task_complete events'
 printf '{"type":"session_meta","payload":{"id":"no-lifecycle"}}\n' >"$warm_codex_sessions/no-lifecycle.jsonl"
 assert_eq "$(CODEX_SESSIONS_DIR="$warm_codex_sessions" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; codex_activity_status no-lifecycle' _ "$ROOT")" unknown 'Codex lifecycle guard fails closed without turn events'
 printf '{"codex":{"cache_warmer_sessions":["warm-session-1"],"cache_warmer_max_per_session":0}}\n' >"$warm_config/config.json"

@@ -11,8 +11,8 @@ codex_activity_status() {
        ($line | fromjson? // {}) as $row |
        if $row.type == "event_msg" then
          ($row.payload.type // "") as $event |
-         if $event == "turn_started" then .seen=true | .state="busy"
-         elif ($event == "turn_complete" or $event == "turn_aborted") then .seen=true | .state="idle"
+         if ($event == "turn_started" or $event == "task_started") then .seen=true | .state="busy"
+         elif ($event == "turn_complete" or $event == "turn_aborted" or $event == "task_complete") then .seen=true | .state="idle"
          else . end
        else . end)
     | .state' "$path" 2>/dev/null) || status=unknown

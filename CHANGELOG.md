@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.18] - 2026-10-04
+- Recognize Codex `task_started` and `task_complete` lifecycle events so idle sessions can be warmed safely with current Codex transcript logs.
+
+## [0.1.17] - 2026-10-04
+### Added
+- Add an optional per-session warmer duration in hours; `0` keeps the default unlimited behavior.
+- Add independent opt-ins to warm a focused pane or a pane with an existing prompt draft; both remain off by default.
+### Changed
+- Require transcript lifecycle evidence that Codex, Claude, and AGY are idle before warming; unknown activity state skips the attempt.
+- Detect unfinished delegated tasks in AGY transcripts even when Herdr reports the foreground turn as done.
+
 ## [0.1.16] - 2026-10-03
 - Clarify the command-palette distinction between per-agent settings and global mode; remove the default global-warming shortcut from Mac and GWDG configs.
 
@@ -19,16 +30,6 @@
 ## [0.1.11] - 2026-10-03
 - Prevent duplicate warmer prompts within the same unchanged cache window.
 - Skip AGY warming while its transcript shows an unfinished delegated background task, even when Herdr reports the foreground turn as done.
-
-## [Unreleased]
-
-## [0.1.17] - 2026-10-04
-### Added
-- Add an optional per-session warmer duration in hours; `0` keeps the default unlimited behavior.
-- Add independent opt-ins to warm a focused pane or a pane with an existing prompt draft; both remain off by default.
-### Changed
-- Require transcript lifecycle evidence that Codex, Claude, and AGY are idle before warming; unknown activity state skips the attempt.
-- Detect unfinished delegated tasks in AGY transcripts even when Herdr reports the foreground turn as done.
 
 ## [0.1.10] - 2026-10-03
 ### Added
