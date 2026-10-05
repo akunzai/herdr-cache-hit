@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.1.21] - 2026-10-05
+- Skip Claude warming while the latest reply is an API rejection such as a usage limit; the warm turn would be rejected too and queue into the user's next turn. Warming resumes after a successful reply. Transient `server_error` replies do not block.
+
 ## [0.1.20] - 2026-10-05
 - Detect Claude background shells from Claude Code's own markers (`run_in_background`, `backgroundTaskId`, or its background notice), including commands moved to the background after a timeout. Foreground output that merely mentions background work no longer blocks warming.
 

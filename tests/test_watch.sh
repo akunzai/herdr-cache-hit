@@ -933,6 +933,20 @@ cat >"$claude_transcript" <<'JSONL'
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-slow","content":"Command did not complete within its 120s timeout and was moved to the background with ID: slow9."}]},"toolUseResult":{"stdout":"","stderr":"","backgroundTaskId":"slow9"}}
 JSONL
 assert_eq "$(claude_activity)" unknown 'Claude activity guard tracks a timed-out command moved to the background'
+cat >"$claude_transcript" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}
+{"type":"user","message":{"content":"next question"}}
+{"type":"assistant","isApiErrorMessage":true,"error":"rate_limit","message":{"content":[{"type":"text","text":"You've hit your session limit"}]}}
+JSONL
+assert_eq "$(claude_activity)" unknown 'Claude activity guard skips while the latest reply is a usage-limit rejection'
+cat >>"$claude_transcript" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"text","text":"answer after reset"}]}}
+JSONL
+assert_eq "$(claude_activity)" idle 'Claude activity guard resumes after a successful reply follows the rejection'
+cat >"$claude_transcript" <<'JSONL'
+{"type":"assistant","isApiErrorMessage":true,"error":"server_error","message":{"content":[{"type":"text","text":"API Error: Connection lost mid-response."}]}}
+JSONL
+assert_eq "$(claude_activity)" idle 'Claude activity guard does not block on a transient server error'
 printf '{"active":{"agent":"claude","session_id":"claude-unknown-session","hit_at":%s,"deadline":%s},"last_known":null}' "$((claude_warm_deadline - 1800))" "$claude_warm_deadline" >"$warm_state/state-pClaudeUnknown.json"
 printf '{"claude":{"cache_warmer_sessions":["claude-unknown-session"]}}\n' >"$warm_config/config.json"
 claude_prompt_count=$(wc -l <"$claude_warm_log")

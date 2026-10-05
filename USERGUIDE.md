@@ -131,6 +131,9 @@ activity signal. By default the pane must be unfocused and the prompt editor
 empty (`Ask Codex to do anything` for Codex; a standalone `>` prompt for AGY;
 an empty `❯` prompt for Claude). The two `cache_warmer_allow_*` settings can
 independently relax those last two guards; unknown activity state still skips.
+For Claude, a session whose latest reply is an API rejection (for example a
+usage limit) also skips until a later reply succeeds; transient server errors
+do not block.
 Claude cache
 warming follows the lifetime indicated by recorded 5-minute or 1-hour cache
 writes and uses a 60-second default margin. Working parents, including parents waiting on

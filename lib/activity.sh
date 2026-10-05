@@ -51,6 +51,9 @@ claude_activity_status() {
        else
          .seen=true |
          if $row.type == "assistant" then
+           # A rejected request (usage limit, auth) would reject the warm turn
+           # too; only a later successful reply lifts it. server_error is transient.
+           .api_blocked = ($row.isApiErrorMessage == true and ($row.error // "") != "server_error") |
            reduce ($row.message.content[]? | objects | select(.type == "tool_use" and (.id | type) == "string")) as $tool
              (. ; .pending[$tool.id] = {name:$tool.name,input:($tool.input // {})})
          elif $row.type == "user" then
@@ -85,6 +88,7 @@ claude_activity_status() {
          reduce ($row | notification_texts | notifications) as $n (. ; finish_task($n))
        end)
     | if (.pending | length) > 0 then "busy"
+      elif .api_blocked == true then "unknown"
       elif (.background | length) > 0 then "unknown"
       elif .seen then "idle"
       else "unknown" end' "$path" 2>/dev/null) || status=unknown
