@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.1.20] - 2026-10-05
+- Detect Claude background shells from Claude Code's own markers (`run_in_background`, `backgroundTaskId`, or its background notice), including commands moved to the background after a timeout. Foreground output that merely mentions background work no longer blocks warming.
+
 ## [0.1.19] - 2026-10-05
 - Fix Claude warming being skipped permanently after any failed tool call, whose transcript `toolUseResult` is a string rather than an object.
 - Clear Claude background shell tasks and background agents when their `<task-notification>` reports a final status; read shell task IDs from `backgroundTaskId`.

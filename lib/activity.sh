@@ -66,8 +66,12 @@ claude_activity_status() {
                 ($row.toolUseResult | objects | (.backgroundTaskId // .task_id // .taskId)) //
                 (try ($text | capture("(?i)(?:task|process|background with)(?: id)?[: ]+(?<task>[A-Za-z0-9_.-]+)").task) catch "")) // "") as $task |
               .pending |= del(.[$id]) |
+              # Only Claude Code'"'"'s own background markers count: command output
+              # that merely mentions background work must not open a task.
               if (($call.name == "Bash" or $call.name == "PowerShell") and
-                  (($call.input.run_in_background == true) or ($text | test("(?i)running in background|background task")))) then
+                  (($call.input.run_in_background == true) or
+                   ([$row.toolUseResult | objects | .backgroundTaskId | strings] | length > 0) or
+                   ($text | test("^Command (running in|.*moved to the) background")))) then
                 .background[if $task != "" then $task else ("untracked:" + $id) end] = $id
               elif (($call.name == "Agent" or $call.name == "Task") and $call.input.run_in_background == true) then
                 .background[$id] = $id

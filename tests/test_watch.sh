@@ -923,6 +923,16 @@ cat >>"$claude_transcript" <<'JSONL'
 {"type":"attachment","attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>agent42</task-id>\n<tool-use-id>toolu-agent</tool-use-id>\n<status>failed</status>\n</task-notification>"}}
 JSONL
 assert_eq "$(claude_activity)" idle 'Claude activity guard clears a background agent from a queued notification'
+cat >"$claude_transcript" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-fg","name":"Bash","input":{"command":"./sync.sh"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-fg","content":"index running in background\nbackground task failed max retries"}]},"toolUseResult":{"stdout":"index running in background","stderr":""}}
+JSONL
+assert_eq "$(claude_activity)" idle 'Claude activity guard ignores foreground output that mentions background work'
+cat >"$claude_transcript" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-slow","name":"Bash","input":{"command":"make all","timeout":120000}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-slow","content":"Command did not complete within its 120s timeout and was moved to the background with ID: slow9."}]},"toolUseResult":{"stdout":"","stderr":"","backgroundTaskId":"slow9"}}
+JSONL
+assert_eq "$(claude_activity)" unknown 'Claude activity guard tracks a timed-out command moved to the background'
 printf '{"active":{"agent":"claude","session_id":"claude-unknown-session","hit_at":%s,"deadline":%s},"last_known":null}' "$((claude_warm_deadline - 1800))" "$claude_warm_deadline" >"$warm_state/state-pClaudeUnknown.json"
 printf '{"claude":{"cache_warmer_sessions":["claude-unknown-session"]}}\n' >"$warm_config/config.json"
 claude_prompt_count=$(wc -l <"$claude_warm_log")
