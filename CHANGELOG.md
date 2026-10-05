@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.19] - 2026-10-05
+- Fix Claude warming being skipped permanently after any failed tool call, whose transcript `toolUseResult` is a string rather than an object.
+- Clear Claude background shell tasks and background agents when their `<task-notification>` reports a final status; read shell task IDs from `backgroundTaskId`.
+
 ## [0.1.18] - 2026-10-04
 - Recognize Codex `task_started` and `task_complete` lifecycle events so idle sessions can be warmed safely with current Codex transcript logs.
 

@@ -897,6 +897,32 @@ printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu
 assert_eq "$(CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; claude_activity_status claude-warm-session /same' _ "$ROOT")" unknown 'Claude activity guard fails closed while a background shell task lacks completion'
 printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-poll","name":"BashOutput","input":{"task_id":"job-1"}}]}}\n{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-poll","content":"Task completed with exit code 0"}]}}\n' >>"$claude_transcript"
 assert_eq "$(CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; claude_activity_status claude-warm-session /same' _ "$ROOT")" idle 'Claude activity guard clears after observed background task completion'
+claude_activity() { CLAUDE_CONFIG_DIR="$claude_config" HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" bash -c 'source "$1/watch.sh"; claude_activity_status claude-warm-session /same' _ "$ROOT"; }
+cat >"$claude_transcript" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-fail","name":"Bash","input":{"command":"false"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-fail","content":"Exit code 1","is_error":true}]},"toolUseResult":"Error: Exit code 1"}
+JSONL
+assert_eq "$(claude_activity)" idle 'Claude activity guard reads a failed tool call whose toolUseResult is a string'
+cat >"$claude_transcript" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-bgid","name":"Bash","input":{"command":"long job","run_in_background":true}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-bgid","content":"Command running in background with ID: bgjob7. Output is being written to: /tmp/bgjob7.output"}]},"toolUseResult":{"stdout":"","stderr":"","backgroundTaskId":"bgjob7"}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-other","content":"<task-notification>\n<task-id>bgjob7</task-id>\n<status>completed</status>\n</task-notification>"}]}}
+{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>bgjob7</task-id>\n<tool-use-id>toolu-bgid</tool-use-id>\n<status>running</status>\n</task-notification>"}
+JSONL
+assert_eq "$(claude_activity)" unknown 'Claude activity guard keeps a background shell task open until a final notification arrives'
+cat >>"$claude_transcript" <<'JSONL'
+{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>bgjob7</task-id>\n<tool-use-id>toolu-bgid</tool-use-id>\n<status>completed</status>\n<summary>Background command \"long job\" completed (exit code 0)</summary>\n</task-notification>"}
+JSONL
+assert_eq "$(claude_activity)" idle 'Claude activity guard clears a background shell task from its completion notification'
+cat >"$claude_transcript" <<'JSONL'
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-agent","name":"Agent","input":{"description":"review","run_in_background":true}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu-agent","content":"Async agent launched"}]},"toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"agent42"}}
+JSONL
+assert_eq "$(claude_activity)" unknown 'Claude activity guard holds while a background agent runs'
+cat >>"$claude_transcript" <<'JSONL'
+{"type":"attachment","attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>agent42</task-id>\n<tool-use-id>toolu-agent</tool-use-id>\n<status>failed</status>\n</task-notification>"}}
+JSONL
+assert_eq "$(claude_activity)" idle 'Claude activity guard clears a background agent from a queued notification'
 printf '{"active":{"agent":"claude","session_id":"claude-unknown-session","hit_at":%s,"deadline":%s},"last_known":null}' "$((claude_warm_deadline - 1800))" "$claude_warm_deadline" >"$warm_state/state-pClaudeUnknown.json"
 printf '{"claude":{"cache_warmer_sessions":["claude-unknown-session"]}}\n' >"$warm_config/config.json"
 claude_prompt_count=$(wc -l <"$claude_warm_log")
