@@ -1291,6 +1291,35 @@ printf '{"active":{"session_id":"agy-armed-session"}}\n' >"$warm_toggle_state/st
 FAKE_REPORTS="$warm_display_log" HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_report_fake" bash -c 'source "$1/lib/core.sh"; report_pane pAgyArmed agy "~1:00 99% ⇣1k" 15000 "~1:00" "99%" "⇣1k" hot "99% ⇣1k" 2000000000 60 99' _ "$ROOT"
 assert_cmd "grep -Fq 'cache=↻~1:00 99% ⇣1k' '$warm_display_log'" 'armed AGY cache displays the auto-warm marker too'
 
+# Herdr App: the shim answers the plugin's herdr calls from herdr-core (`hc`).
+app_hc="$TMP/app-hc"; app_state="$TMP/app-state"
+cat >"$app_hc" <<'HC'
+#!/usr/bin/env bash
+case "$1 ${2:-}" in
+  "ls --json") printf '%s\n' '{"terminals":[
+    {"address":"t1","agent":"claude-code","state":"live","cwd":"/shell"},
+    {"address":"t2","agent":null,"state":"live","cwd":"/shell"},
+    {"address":"t3","agent":"codex","state":"finished","cwd":"/shell"},
+    {"address":"vps/t4","agent":"codex","state":"live","cwd":"/remote"}]}' ;;
+  "get t1") printf '%s\n' '{"address":"t1","pid":10,"cwd":"/shell","title":"Claude Code",
+    "status":{"app":"claude-code","state":"idle"},
+    "foreground":{"pid":11,"name":"claude","argv":["claude","--resume","s-1"],"cwd":"/work"}}' ;;
+  *) exit 1 ;;
+esac
+HC
+chmod +x "$app_hc"
+app_shim() { HC_BIN_PATH="$app_hc" HERDR_PLUGIN_STATE_DIR="$app_state" bash "$ROOT/scripts/herdr-app-shim.sh" "$@"; }
+assert_eq "$(app_shim api snapshot | jq -c '.result.snapshot.panes')" \
+  '[{"pane_id":"t1","agent":"claude","agent_status":"idle","cwd":"/work","foreground_cwd":"/work","terminal_title":"Claude Code","focused":true,"agent_session":null}]' \
+  'Herdr App shim lists live local agents with the agent folder'
+assert_eq "$(app_shim pane process-info --pane t1 | jq -c '.result.process_info.foreground_processes[0] | [.pid, .argv0, .argv[2]]')" \
+  '[11,"claude","s-1"]' 'Herdr App shim reports the agent process for session resolvers'
+app_shim pane report-metadata t1 --agent claude --token cache=a --token cache_state=hot --ttl-ms 1000
+app_shim pane report-metadata t1 --agent claude --token cache=b --clear-token cache_state
+assert_eq "$(jq -c '[.agent, .tokens]' "$app_state/app-metadata/t1.json")" '["claude",{"cache":"b"}]' \
+  'Herdr App shim merges reported tokens and clears removed ones'
+assert_cmd "! app_shim agent prompt t1 hello" 'Herdr App shim refuses to type into terminals'
+
 if bash "$ROOT/tests/test_timer.sh"; then :; else not_ok 'background timer lifecycle'; fi
 
 exit "$fail"

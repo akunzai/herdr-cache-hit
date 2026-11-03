@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Add experimental, display-only Herdr App support: a bundled mod runs the scanner through a herdr-core shim, including on Windows, and publishes the estimates as `shared("cache-hit")`. The user guide has a recipe for the Agents sidebar.
 - Keep LF line endings from a native Windows `jq` in Git Bash. Every raw value but the last ended in `\r`, so only one of several agents matched.
 
 ## [0.1.26] - 2026-10-24

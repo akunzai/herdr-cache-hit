@@ -145,6 +145,8 @@ For detailed information on configuring symbols, thresholds, timezones, per-agen
 
 A ready-to-use template is available in [`config.example.json`](config.example.json).
 
+Herdr App (the desktop app) is supported experimentally and display-only through a bundled mod; see [Herdr App (Experimental)](USERGUIDE.md#herdr-app-experimental).
+
 ---
 
 ## Verification & Testing
