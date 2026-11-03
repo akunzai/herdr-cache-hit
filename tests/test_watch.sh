@@ -1109,6 +1109,10 @@ assert_eq "$(AGY_HOME="$agy_task_root" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" 
 printf '%s\n' '{"type":"SYSTEM_MESSAGE","content":"Task id \"agy-task-session/task-1\" finished with result"}' >>"$agy_task_transcript"
 assert_cmd "AGY_HOME='$agy_task_root' bash -c 'source \"$ROOT/lib/agy.sh\"; ! agy_has_running_background_task agy-task-session'" 'AGY transcript guard releases the session after the background task finishes'
 assert_eq "$(AGY_HOME="$agy_task_root" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" bash -c 'source "$1/watch.sh"; agy_activity_status agy-task-session' _ "$ROOT")" idle 'AGY activity guard clears after task completion'
+printf '%s\n' "{\"type\":\"GENERIC\",\"content\":\"Task: agy-task-session/task-2\\nStatus: RUNNING\"}" \
+  '{"type":"SYSTEM_MESSAGE","content":"Task id \"agy-task-session/task-2\" was canceled with result:\nTool execution was canceled"}' >>"$agy_task_transcript"
+assert_cmd "AGY_HOME='$agy_task_root' bash -c 'source \"$ROOT/lib/agy.sh\"; ! agy_has_running_background_task agy-task-session'" 'AGY transcript guard releases the session after a background task is canceled'
+assert_eq "$(AGY_HOME="$agy_task_root" HERDR_PLUGIN_STATE_DIR="$agy_warm_state" HERDR_PLUGIN_CONFIG_DIR="$agy_warm_config" bash -c 'source "$1/watch.sh"; agy_activity_status agy-task-session' _ "$ROOT")" idle 'AGY activity guard clears after a canceled task'
 agy_warm_marker=$(warm_marker_path agy agy-observation-test)
 : >"$agy_warm_marker"
 record_warmed_observation agy agy-observation-test agy-provider agy-model 900 1800

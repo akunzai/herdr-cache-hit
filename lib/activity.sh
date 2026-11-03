@@ -97,18 +97,8 @@ claude_activity_status() {
 }
 
 agy_activity_status() {
-  local session_id=$1 supplied=${2:-} path status
-  path=$(agy_transcript_path "$session_id" "$supplied") || { printf 'unknown\n'; return 0; }
-  status=$(jq -s -r '
-    ([ .[] | (.content // "") | split("\n") as $lines |
-      range(0; ($lines | length)) as $i |
-      select($lines[$i] | startswith("Task: ")) |
-      select($lines[$i + 1] == "Status: RUNNING") |
-      $lines[$i][6:]
-    ]) as $running |
-    ([ .[] | (.content // "") | split("Task id \"") | .[1] // empty | split("\" finished") | .[0] ]) as $finished |
-    if (($running - $finished) | length) > 0 then "busy" else "idle" end
-  ' "$path" 2>/dev/null) || status=unknown
+  local status
+  status=$(agy_task_activity "$1" "${2:-}") || status=unknown
   [[ "$status" == idle || "$status" == busy ]] || status=unknown
   printf '%s\n' "$status"
 }
