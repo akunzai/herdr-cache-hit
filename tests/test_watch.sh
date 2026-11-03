@@ -15,6 +15,8 @@ not_ok() { printf 'not ok - %s\n' "$1"; fail=1; }
 assert_eq() { if [[ "$1" == "$2" ]]; then ok "$3"; else printf 'not ok - %s\n' "$3"; fail=1; fi; }
 assert_cmd() { if eval "$1" >/dev/null 2>&1; then ok "$2"; else not_ok "$2"; fi; }
 assert_eq "$(sh "$ROOT/scripts/run-bash.sh" -c 'printf launched')" launched 'sh launcher starts Bash'
+# A native Windows jq would end every raw line in \r; values must compare exactly.
+assert_eq "$(jq -rn '"t1", "t2"' | od -An -c | tr -d ' \n')" 't1\nt2\n' 'jq raw output has LF line endings'
 if command -v python3 >/dev/null 2>&1; then
   if python3 "$ROOT/tests/test_claude_session.py"; then
     ok 'Claude missing-session resolver fixtures'
