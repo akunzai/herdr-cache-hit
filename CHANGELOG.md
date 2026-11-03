@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 - Read AGY 1.4 transcripts, which write uncached input and cache reads at the top level of `PLANNER_RESPONSE` steps and have no cache-write count. Without statusline data, such sessions showed no cache value.
+- Keep LF line endings from a native Windows `jq` in Git Bash. Every raw value but the last ended in `\r`, so only one of several agents matched.
+- Run the test suite under Bash 3.2 in CI, the version macOS still ships as `/bin/bash`.
 
 ## [0.1.26] - 2026-10-24
 - Preserve Codex's last-request cache counters and timestamp after compaction. Context-only reports with zero request counters no longer erase cache reads or appear as a cache miss, including after a restart without saved state. The parser still accepts real requests with input tokens and zero cache reads.
