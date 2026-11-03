@@ -14,23 +14,26 @@ agy_transcript_path() {
 
 # AGY can report its foreground turn as done while a delegated background task
 # is still running. The transcript records RUNNING checks and a later system
-# message when each task finishes; keep the warmer out until those match.
-agy_has_running_background_task() {
-  local session_id=$1 transcript_path
-  transcript_path=$(agy_transcript_path "$session_id") || return 1
-  local result
-  result=$(jq -s '
+# message when each task finishes or is canceled; busy until those match.
+# Prints busy or idle; fails when the transcript is missing or unreadable.
+agy_task_activity() {
+  local session_id=$1 supplied=${2:-} transcript_path
+  transcript_path=$(agy_transcript_path "$session_id" "$supplied") || return 1
+  jq -s -r '
     ([ .[] | (.content // "") | split("\n") as $lines |
       range(0; ($lines | length)) as $i |
       select($lines[$i] | startswith("Task: ")) |
       select($lines[$i + 1] == "Status: RUNNING") |
       $lines[$i][6:]
     ]) as $running |
-    ([ .[] | (.content // "") | split("Task id \"") | .[1] // empty | split("\" finished") | .[0] ]) as $finished |
-    (($running - $finished) | length) > 0
-  ' "$transcript_path" 2>/dev/null) || return 1
-  [[ "$result" == true ]] && return 0
-  return 1
+    ([ .[] | (.content // "") | split("Task id \"") | .[1] // empty
+       | capture("^(?<id>[^\"]+)\" (finished|was canceled)") | .id ]) as $finished |
+    if (($running - $finished) | length) > 0 then "busy" else "idle" end
+  ' "$transcript_path" 2>/dev/null
+}
+
+agy_has_running_background_task() {
+  [[ "$(agy_task_activity "$1")" == busy ]]
 }
 
 agy_usage_helper() {
@@ -122,7 +125,11 @@ agy_latest_usage() {
     [ .[] |
       (.conversation_id // .conversationId // .session_id // .sessionId // .conversation.id // null) as $embedded |
       select($embedded == null or $embedded == $sid) |
-      (.context_window.current_usage // .current_usage // .usage // .message.usage // {}) as $u |
+      # AGY 1.4+ writes uncached input and cache reads at the top level of
+      # PLANNER_RESPONSE steps, with no cache-write count.
+      (if (.input_tokens|type) == "number" and (.cache_read_tokens|type) == "number"
+       then {input_tokens, cache_read_input_tokens: .cache_read_tokens, cache_creation_input_tokens: (.cache_creation_tokens // 0)}
+       else (.context_window.current_usage // .current_usage // .usage // .message.usage // {}) end) as $u |
       {ts:(.timestamp // .created_at // .createdAt // .message.timestamp // ""),
        input:($u.input_tokens // null), read:($u.cache_read_input_tokens // null),
        write5m:((($u.cache_creation // {}).ephemeral_5m_input_tokens) // 0),
