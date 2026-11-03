@@ -12,15 +12,19 @@
 
 A high-efficiency plugin for [Herdr](https://github.com/herdrdev/herdr) that provides real-time prompt-cache HUD metrics, dynamic expiration countdowns, and declarative cache-deadline agent sorting.
 
+The same project also includes an experimental, display-only mod for [Herdr App](https://github.com/herdrdev/herdr-app) ([website](https://herdr.dev/)). Both use one shared scanner; the desktop mod has its own installation and configuration, and does not warm caches or control agent sorting.
+
 Supports **Codex CLI**, **AGY** ([Antigravity CLI](docs/AGY_INTEGRATION.md)), **Claude Code**, and **OpenCode**.
 
-## Latest release: v0.1.26
+## Latest release: v0.2.0
 
-[v0.1.26](https://github.com/e-kotov/herdr-cache-hit/releases/tag/v0.1.26) preserves last-request Codex cache counters after compaction, including when no saved plugin state exists. Its one-hour cache estimate becomes unknown when elapsed, without claiming eviction. Recent releases add native Windows support through Git Bash and fix automatic background refreshes.
+[v0.2.0](https://github.com/e-kotov/herdr-cache-hit/releases/tag/v0.2.0) adds experimental Herdr App desktop support, contributed by [@akunzai](https://github.com/akunzai) in [#15](https://github.com/e-kotov/herdr-cache-hit/pull/15), plus AGY 1.4 token parsing, canceled-task handling, Windows line-ending fixes, and Bash 3.2 CI coverage. The existing TUI plugin continues to provide cache display, sorting and opt-in warming.
 
 Python 3.6+ is recommended for exact Codex transcript selection. [Read the full changelog](CHANGELOG.md).
 
 [![Herdr terminal sidebar showing alarm, active, and cold prompt-cache states sorted by expiry](https://www.ekotov.pro/herdr-cache-hit/assets/herdr-expiry-agents.webp)](https://www.ekotov.pro/herdr-cache-hit/)
+
+The screenshot shows the Herdr TUI. For desktop setup, see [Herdr App (Experimental)](USERGUIDE.md#herdr-app-experimental).
 
 ---
 
@@ -51,6 +55,8 @@ When `cache_warmer_allow_nonempty_prompt` is enabled, Herdr sends the warm promp
 ---
 
 ## Quick Start
+
+The steps below are for the **Herdr TUI**. For the desktop app, use the separate [Herdr App installation instructions](USERGUIDE.md#herdr-app-experimental).
 
 ### 1. Install Plugin
 
@@ -145,7 +151,7 @@ For detailed information on configuring symbols, thresholds, timezones, per-agen
 
 A ready-to-use template is available in [`config.example.json`](config.example.json).
 
-Herdr App (the desktop app) is supported experimentally and display-only through a bundled mod; see [Herdr App (Experimental)](USERGUIDE.md#herdr-app-experimental).
+[Herdr App](https://github.com/herdrdev/herdr-app) ([website](https://herdr.dev/)) is supported experimentally and display-only through a bundled mod; see [Herdr App (Experimental)](USERGUIDE.md#herdr-app-experimental). Desktop support is community-maintained on a best-effort basis.
 
 ---
 
@@ -161,6 +167,13 @@ go test -v ./cmd/agy-usage
 ```
 
 ---
+
+## Contributors
+
+- [Egor Kotov](https://github.com/e-kotov) — project maintainer.
+- [@akunzai](https://github.com/akunzai) — Herdr App desktop integration, AGY compatibility, Windows fixes and Bash 3.2 CI coverage (including [#15](https://github.com/e-kotov/herdr-cache-hit/pull/15)).
+
+See all [GitHub contributors](https://github.com/e-kotov/herdr-cache-hit/graphs/contributors).
 
 ## License
 

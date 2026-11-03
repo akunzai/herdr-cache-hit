@@ -288,10 +288,10 @@ Codex adapter, with additional guards for same-directory panes and subagents.
 
 ### AGY / Antigravity CLI Architecture
 
-Because AGY CLI transcripts do not serialize token metrics to disk, the plugin uses a 3-tier fallback strategy:
+The plugin uses a 3-tier fallback strategy across AGY versions. AGY 1.4+ transcripts include top-level input and cache-read counts; older versions may need the statusline sidecar or SQLite helper:
 1. **Tier 1 — Live Statusline Sidecar (Fastest)**: The supplied `scripts/agy-statusline-capture.sh` wrapper writes real-time prompt cache stats to `~/.cache/herdr-cache-plugin/agy-statusline/<sid>.json` without SQLite parsing.
 2. **Tier 2 — Go SQLite Helper (`agy-usage-*`)**: If the statusline sidecar is absent, the plugin invokes the compiled helper to extract token metrics directly from AGY's internal SQLite database (`~/.gemini/antigravity-cli/conversations/<sid>.db`). Precompiled binaries are provided for macOS, Linux, and Windows x64.
-3. **Tier 3 — Transcript Fallback**: If neither is available, it attempts to read `transcript.jsonl` (used by AGY Web IDE).
+3. **Tier 3 — Transcript Fallback**: If neither is available, it reads `transcript.jsonl`, including AGY 1.4+ `PLANNER_RESPONSE` token counts and older nested usage formats. AGY 1.4 does not report cache-write counts.
 
 > [!NOTE]
 > **If you don't use AGY CLI:**
@@ -303,13 +303,19 @@ For installation instructions for the tested wrapper, see the **[Antigravity CLI
 
 ## Herdr App (Experimental)
 
-Herdr App, the desktop app (`herdr-app` with herdr-core `hc`), does not load Herdr plugins. Its extension point is JavaScript mods under `~/.config/herdr-app/mods/` (`$HERDR_APP_HOME/mods/` or `$XDG_CONFIG_HOME/herdr-app/mods/` when set; the installer follows the same order). The bundled `herdr-app/mods/cache-hit` mod runs the same scanner every 15 seconds through `scripts/herdr-app-shim.sh`, a `herdr` stand-in that answers the plugin from `hc`.
+[Herdr App](https://github.com/herdrdev/herdr-app) ([website and downloads](https://herdr.dev/)), the desktop app (`herdr-app` with herdr-core `hc`), does not load Herdr plugins. Its extension point is JavaScript mods under `~/.config/herdr-app/mods/` (`$HERDR_APP_HOME/mods/` or `$XDG_CONFIG_HOME/herdr-app/mods/` when set; the installer follows the same order). The bundled `herdr-app/mods/cache-hit` mod runs the same scanner every 15 seconds through `scripts/herdr-app-shim.sh`, a `herdr` stand-in that answers the plugin from `hc`.
+
+Contributed by [@akunzai](https://github.com/akunzai) in [#15](https://github.com/e-kotov/herdr-cache-hit/pull/15). Desktop support is experimental, community-maintained and best effort; Windows desktop use was tested by the contributor, not the project maintainer.
 
 This support is display-only: the shim refuses to type into terminals, so the cache warmer and `herdr-cache-view` sorting do not run under Herdr App. The mod runs the scanner with `HERDR_CACHE_DISPLAY_ONLY=1`, so warmer settings in its configuration are ignored: no `↻` marker and no warming checks. As in Herdr, every deadline is an estimate.
 
 ### Install
 
+Install Herdr App and its core first, then clone this repository:
+
 ```bash
+git clone https://github.com/e-kotov/herdr-cache-hit.git
+cd herdr-cache-hit
 ./scripts/install-herdr-app-mod.sh
 ```
 
