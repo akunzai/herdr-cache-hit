@@ -1021,6 +1021,13 @@ printf '{"type":"session_meta","payload":{"id":"warm-session-1"}}\n{"type":"even
 export CODEX_SESSIONS_DIR="$warm_codex_sessions"
 printf '{"active":{"agent":"codex","session_id":"warm-session-1","model":"gpt-test","provider":"openai","signature":"sig","hit_at":%s,"deadline":%s},"last_known":null,"observations":[]}\n' "$((warm_deadline - 1800))" "$warm_deadline" >"$warm_state/state-pWarm.json"
 printf '{"codex":{"cache_warmer_sessions":["warm-session-1"],"cache_warmer_max_per_session":2}}\n' >"$warm_config/config.json"
+# Herdr App's display-only mode never warms, so it never asks Herdr for a snapshot either.
+display_only_calls="$TMP/display-only-herdr-calls"
+display_only_fake="$TMP/fake-herdr-display-only"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\\n" "$*" >>"$FAKE_CALLS"' >"$display_only_fake"
+chmod +x "$display_only_fake"
+FAKE_CALLS="$display_only_calls" HERDR_CACHE_DISPLAY_ONLY=1 HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$display_only_fake" bash -c 'source "$1/watch.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
+assert_cmd "[[ ! -e \"$display_only_calls\" ]]" 'display-only mode skips warming checks for an armed session near expiry'
 FAKE_PROMPT_LOG="$warm_log" FAKE_STATUS=working HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
 assert_cmd "[[ ! -s \"$warm_log\" ]]" 'Codex warmer skips a working parent session, including a subagent wait'
 FAKE_PROMPT_LOG="$warm_log" FAKE_FOCUSED=true HERDR_PLUGIN_STATE_DIR="$warm_state" HERDR_PLUGIN_CONFIG_DIR="$warm_config" HERDR_BIN_PATH="$warm_fake" bash -c 'source "$1/watch.sh"; maybe_warm_codex pWarm warm-session-1' _ "$ROOT"
@@ -1290,13 +1297,16 @@ printf '{"cache_warmer_symbol":"↻","agy":{"cache_warmer_sessions":["agy-armed-
 printf '{"active":{"session_id":"agy-armed-session"}}\n' >"$warm_toggle_state/state-pAgyArmed.json"
 FAKE_REPORTS="$warm_display_log" HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_report_fake" bash -c 'source "$1/lib/core.sh"; report_pane pAgyArmed agy "~1:00 99% ⇣1k" 15000 "~1:00" "99%" "⇣1k" hot "99% ⇣1k" 2000000000 60 99' _ "$ROOT"
 assert_cmd "grep -Fq 'cache=↻~1:00 99% ⇣1k' '$warm_display_log'" 'armed AGY cache displays the auto-warm marker too'
+: >"$warm_display_log"
+FAKE_REPORTS="$warm_display_log" HERDR_CACHE_DISPLAY_ONLY=1 HERDR_PLUGIN_CONFIG_DIR="$warm_toggle_config" HERDR_PLUGIN_STATE_DIR="$warm_toggle_state" HERDR_BIN_PATH="$warm_report_fake" bash -c 'source "$1/lib/core.sh"; report_pane pAgyArmed agy "~1:00 99% ⇣1k" 15000 "~1:00" "99%" "⇣1k" hot "99% ⇣1k" 2000000000 60 99' _ "$ROOT"
+assert_cmd "grep -Fq 'cache=~1:00 99% ⇣1k' '$warm_display_log'" 'display-only mode shows an armed cache without the warmer marker'
 
 # Herdr App: the shim answers the plugin's herdr calls from herdr-core (`hc`).
 app_hc="$TMP/app-hc"; app_state="$TMP/app-state"
 cat >"$app_hc" <<'HC'
 #!/usr/bin/env bash
 case "$1 ${2:-}" in
-  "ls --json") printf '%s\n' '{"terminals":[
+  "ls --json") [[ -z "${FAKE_HC_LS_FAIL:-}" ]] || exit 1; printf '%s\n' '{"terminals":[
     {"address":"t1","agent":"claude-code","state":"live","cwd":"/shell"},
     {"address":"t2","agent":null,"state":"live","cwd":"/shell"},
     {"address":"t3","agent":"codex","state":"finished","cwd":"/shell"},
@@ -1319,6 +1329,18 @@ app_shim pane report-metadata t1 --agent claude --token cache=b --clear-token ca
 assert_eq "$(jq -c '[.agent, .tokens]' "$app_state/app-metadata/t1.json")" '["claude",{"cache":"b"}]' \
   'Herdr App shim merges reported tokens and clears removed ones'
 assert_cmd "! app_shim agent prompt t1 hello" 'Herdr App shim refuses to type into terminals'
+assert_cmd "! FAKE_HC_LS_FAIL=1 app_shim api snapshot" 'Herdr App shim snapshot fails when hc ls fails'
+assert_cmd "! FAKE_HC_LS_FAIL=1 app_shim pane list" 'Herdr App shim pane list fails when hc ls fails'
+# A failed listing must not read as "every terminal closed".
+app_shim pane report-metadata t9 --agent codex --token cache=kept
+printf 't9\n' >"$app_state/seen-panes"
+if FAKE_HC_LS_FAIL=1 HC_BIN_PATH="$app_hc" HERDR_PLUGIN_STATE_DIR="$app_state" HERDR_BIN_PATH="$ROOT/scripts/herdr-app-shim.sh" \
+  HERDR_NO_TIMER=1 HERDR_CACHE_DISPLAY_ONLY=1 bash "$ROOT/watch.sh" >/dev/null 2>&1; then
+  not_ok 'watcher reports a failed Herdr App listing'
+else
+  ok 'watcher reports a failed Herdr App listing'
+fi
+assert_eq "$(jq -r '.tokens.cache' "$app_state/app-metadata/t9.json")" kept 'watcher keeps pane records when the Herdr App listing fails'
 
 if bash "$ROOT/tests/test_timer.sh"; then :; else not_ok 'background timer lifecycle'; fi
 

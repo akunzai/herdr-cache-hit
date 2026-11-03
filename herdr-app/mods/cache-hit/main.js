@@ -34,6 +34,7 @@ export default class CacheHit extends View {
   env() {
     return [
       `HERDR_BIN_PATH=${this.root}/scripts/herdr-app-shim.sh`, "HERDR_NO_TIMER=1",
+      "HERDR_CACHE_DISPLAY_ONLY=1",
       `HERDR_PLUGIN_STATE_DIR=${home()}/${STATE_DIR}`,
       `HERDR_PLUGIN_CONFIG_DIR=${home()}/${CONFIG_DIR}`,
     ];

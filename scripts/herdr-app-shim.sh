@@ -5,11 +5,13 @@
 # This shim answers that surface from herdr-core (`hc`) and stores reported
 # pane metadata as JSON files that the Herdr App mod reads.
 #
-#   HERDR_BIN_PATH=scripts/herdr-app-shim.sh HERDR_NO_TIMER=1 bash watch.sh
+#   HERDR_BIN_PATH=scripts/herdr-app-shim.sh HERDR_NO_TIMER=1 \
+#     HERDR_CACHE_DISPLAY_ONLY=1 bash watch.sh
 #
 # Supported: api snapshot, pane list, pane process-info, pane report-metadata.
 # Anything else fails: herdr-cache-view sorting stays inactive, and the cache
 # warmer cannot type into a terminal (`agent prompt`) under Herdr App.
+# HERDR_CACHE_DISPLAY_ONLY=1 makes the plugin skip warming altogether.
 # Every pane reports as focused, so the warmer's focus guard also holds.
 set -u
 SHIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,10 +57,14 @@ hc_info() {
 hc_terminals() {
   # Local terminals only: session recovery reads local processes and files.
   # `hc ls` reports the shell's folder; `hc get` adds the agent's own folder.
-  local addrs addr out=()
-  addrs=$("$HC_BIN" ls --json 2>/dev/null | jq -r "$AGENT_MAP"'
-    .terminals[]? | select(.state == "live" and (.address | contains("/") | not))
-    | select((.agent // "" | plugin_agent) != null) | .address') || return 1
+  # A failed `hc ls` must fail the call, not read as "no terminals": the
+  # watcher would clear every pane's record.
+  local list addrs addr out=()
+  list=$("$HC_BIN" ls --json 2>/dev/null) || return 1
+  jq -e '.terminals | type == "array"' >/dev/null 2>&1 <<<"$list" || return 1
+  addrs=$(jq -r "$AGENT_MAP"'
+    .terminals[] | select(.state == "live" and (.address | contains("/") | not))
+    | select((.agent // "" | plugin_agent) != null) | .address' <<<"$list") || return 1
   local info pid sid
   for addr in $addrs; do
     info=$(hc_info "$addr") || continue

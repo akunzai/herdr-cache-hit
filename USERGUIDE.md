@@ -303,9 +303,9 @@ For installation instructions for the tested wrapper, see the **[Antigravity CLI
 
 ## Herdr App (Experimental)
 
-Herdr App, the desktop app (`herdr-app` with herdr-core `hc`), does not load Herdr plugins. Its extension point is JavaScript mods under `~/.config/herdr-app/mods/`. The bundled `herdr-app/mods/cache-hit` mod runs the same scanner every 15 seconds through `scripts/herdr-app-shim.sh`, a `herdr` stand-in that answers the plugin from `hc`.
+Herdr App, the desktop app (`herdr-app` with herdr-core `hc`), does not load Herdr plugins. Its extension point is JavaScript mods under `~/.config/herdr-app/mods/` (`$HERDR_APP_HOME/mods/` or `$XDG_CONFIG_HOME/herdr-app/mods/` when set; the installer follows the same order). The bundled `herdr-app/mods/cache-hit` mod runs the same scanner every 15 seconds through `scripts/herdr-app-shim.sh`, a `herdr` stand-in that answers the plugin from `hc`.
 
-This support is display-only: the shim refuses to type into terminals, so the cache warmer and `herdr-cache-view` sorting do not run under Herdr App. As in Herdr, every deadline is an estimate.
+This support is display-only: the shim refuses to type into terminals, so the cache warmer and `herdr-cache-view` sorting do not run under Herdr App. The mod runs the scanner with `HERDR_CACHE_DISPLAY_ONLY=1`, so warmer settings in its configuration are ignored: no `↻` marker and no warming checks. As in Herdr, every deadline is an estimate.
 
 ### Install
 

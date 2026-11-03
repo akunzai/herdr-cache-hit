@@ -4,7 +4,8 @@
 # folder) and records this checkout so the mod can run watch.sh from it.
 set -eu
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
-DEST="${HERDR_APP_HOME:-$HOME/.config/herdr-app}/mods/cache-hit"
+# Herdr App's own lookup order for its configuration folder.
+DEST="${HERDR_APP_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr-app}/mods/cache-hit"
 [[ -L "$DEST" ]] && rm -f "$DEST"
 mkdir -p "$DEST"
 cp "$ROOT"/herdr-app/mods/cache-hit/{main.js,mod.json} "$DEST/"
@@ -19,7 +20,8 @@ case "$(uname -s)" in
     cygpath -w "$(command -v bash)" >"$DEST/bash-path"
     dirs=""
     for tool in env jq python3 hc; do
-      dir=$(dirname -- "$(command -v "$tool")") || { echo "install-herdr-app-mod: $tool not found" >&2; exit 1; }
+      bin=$(command -v "$tool") || { echo "install-herdr-app-mod: $tool not found" >&2; exit 1; }
+      dir=$(dirname -- "$bin")
       case ":$dirs:" in *":$dir:"*) ;; *) dirs=${dirs:+$dirs:}$dir ;; esac
     done
     printf '%s\n' "$dirs" >"$DEST/runtime-path"
