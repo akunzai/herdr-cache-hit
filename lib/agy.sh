@@ -125,7 +125,11 @@ agy_latest_usage() {
     [ .[] |
       (.conversation_id // .conversationId // .session_id // .sessionId // .conversation.id // null) as $embedded |
       select($embedded == null or $embedded == $sid) |
-      (.context_window.current_usage // .current_usage // .usage // .message.usage // {}) as $u |
+      # AGY 1.4+ writes uncached input and cache reads at the top level of
+      # PLANNER_RESPONSE steps, with no cache-write count.
+      (if (.input_tokens|type) == "number" and (.cache_read_tokens|type) == "number"
+       then {input_tokens, cache_read_input_tokens: .cache_read_tokens, cache_creation_input_tokens: (.cache_creation_tokens // 0)}
+       else (.context_window.current_usage // .current_usage // .usage // .message.usage // {}) end) as $u |
       {ts:(.timestamp // .created_at // .createdAt // .message.timestamp // ""),
        input:($u.input_tokens // null), read:($u.cache_read_input_tokens // null),
        write5m:((($u.cache_creation // {}).ephemeral_5m_input_tokens) // 0),
