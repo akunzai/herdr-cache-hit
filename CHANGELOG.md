@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Keep LF line endings from a native Windows `jq` in Git Bash. Every raw value but the last ended in `\r`, so only one of several agents matched.
 - Run the test suite under Bash 3.2 in CI, the version macOS still ships as `/bin/bash`.
 
 ## [0.1.26] - 2026-10-24

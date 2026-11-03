@@ -2,6 +2,10 @@
 # shellcheck disable=SC2034
 [[ -n "${_HERDR_CACHE_CORE_LOADED:-}" ]] && return 0
 _HERDR_CACHE_CORE_LOADED=1
+# A native Windows jq writes CRLF, so `jq -r` values would end in \r.
+case "$(uname -s 2>/dev/null)" in
+  MINGW* | MSYS* | CYGWIN*) jq() { command jq --binary "$@"; } ;;
+esac
 readonly HERDR_BIN="${HERDR_BIN_PATH:-herdr}"
 readonly SESSIONS_DIR="${CODEX_SESSIONS_DIR:-${HODEX_SESSIONS_DIR:-${CODEX_HOME:-$HOME/.codex}/sessions}}"
 readonly STATE_DIR="${HERDR_PLUGIN_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr/plugins/cache-hit}"
