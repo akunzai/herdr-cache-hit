@@ -301,6 +301,12 @@ agy_file="$agy_root/antigravity/brain/agy-1/.system_generated/logs/transcript.js
 printf '%s\n' '{"conversation_id":"wrong","created_at":"2026-09-06T10:00:00Z","context_window":{"current_usage":{"input_tokens":1,"cache_read_input_tokens":1,"cache_creation_input_tokens":1}},"model":"bad"}' 'partial' '{"conversationId":"agy-1","created_at":"2026-09-06T10:01:00Z","context_window":{"current_usage":{"input_tokens":12000,"cache_read_input_tokens":48900,"cache_creation_input_tokens":3000}},"model":"Gemini 3.8 Flash"}' >"$agy_file"
 assert_eq "$(agy_usage agy-1 | cut -f1-10)" $'agy\tagy-1\t2026-09-06T10:01:00Z\t12000\t48900\t3000\t0\t0\tGemini 3.8 Flash\tantigravity' 'AGY transcript maps read/write fields and rejects mismatched IDs'
 assert_eq "$(agy_usage missing || true)" '' 'missing AGY transcript is unavailable'
+# AGY 1.4 writes uncached input and cache reads at the top level of
+# PLANNER_RESPONSE steps, without a nested usage object or a cache-write count.
+mkdir -p "$agy_root/antigravity/brain/agy-14/.system_generated/logs"
+printf '%s\n' '{"step_index":7,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-03T11:19:26Z","input_tokens":4604,"cache_read_tokens":74867,"output_tokens":3}' \
+  '{"step_index":8,"source":"USER","type":"USER_INPUT","status":"DONE","created_at":"2026-11-03T11:20:00Z"}' >"$agy_root/antigravity/brain/agy-14/.system_generated/logs/transcript.jsonl"
+assert_eq "$(agy_usage agy-14 | cut -f1-8)" $'agy\tagy-14\t2026-11-03T11:19:26Z\t4604\t74867\t0\t0\t0' 'AGY 1.4 top-level token counts are read from PLANNER_RESPONSE steps'
 agy_cli_root="$TMP/agy-cli"; mkdir -p "$agy_cli_root/brain/agy-cli-1/.system_generated/logs"; export AGY_CLI_HOME="$agy_cli_root"
 printf '%s\n' '{"conversation_id":"agy-cli-1","created_at":"2026-09-06T10:03:00Z","context_window":{"current_usage":{"input_tokens":10,"cache_read_input_tokens":4,"cache_creation_input_tokens":2}},"model":"Gemini CLI"}' >"$agy_cli_root/brain/agy-cli-1/.system_generated/logs/transcript.jsonl"
 assert_eq "$(agy_transcript_path agy-cli-1)" "$agy_cli_root/brain/agy-cli-1/.system_generated/logs/transcript.jsonl" 'AGY native CLI transcript path is discovered'
