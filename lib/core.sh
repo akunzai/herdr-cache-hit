@@ -43,6 +43,8 @@ warm_started_path() {
 state_path() { printf '%s/state-%s.json\n' "$STATE_DIR" "${1//[^A-Za-z0-9_.-]/_}"; }
 warmer_enabled_for_session() {
   local agent=$1 session_id=$2
+  # Herdr App's shim cannot type into terminals: no marker and no warm checks.
+  [[ -z "${HERDR_CACHE_DISPLAY_ONLY:-}" ]] || return 1
   [[ -s "$CONFIG_FILE" ]] || return 1
   jq -e --arg agent "$agent" --arg sid "$session_id" '
     if .cache_warmer_global_enabled == true then

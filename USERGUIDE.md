@@ -12,7 +12,8 @@ This guide covers full configuration, token customization, sidebar styling, and 
 4. [Sidebar Styling & Color Rules](#sidebar-styling--color-rules)
 5. [Agent Sorting & Keybindings](#agent-sorting--keybindings)
 6. [Agent Adapters & Data Sources](#agent-adapters--data-sources)
-7. [Troubleshooting & Diagnostics](#troubleshooting--diagnostics)
+7. [Herdr App (Experimental)](#herdr-app-experimental)
+8. [Troubleshooting & Diagnostics](#troubleshooting--diagnostics)
 
 ---
 
@@ -297,6 +298,60 @@ Because AGY CLI transcripts do not serialize token metrics to disk, the plugin u
 > You do **not** need the Go helper or any statusline scripts. Codex, Claude Code, and OpenCode work completely out of the box with standard system tools (`bash`, `jq`, and optionally `python3`).
 
 For installation instructions for the tested wrapper, see the **[Antigravity CLI (AGY) Integration Guide](docs/AGY_INTEGRATION.md)**.
+
+---
+
+## Herdr App (Experimental)
+
+Herdr App, the desktop app (`herdr-app` with herdr-core `hc`), does not load Herdr plugins. Its extension point is JavaScript mods under `~/.config/herdr-app/mods/` (`$HERDR_APP_HOME/mods/` or `$XDG_CONFIG_HOME/herdr-app/mods/` when set; the installer follows the same order). The bundled `herdr-app/mods/cache-hit` mod runs the same scanner every 15 seconds through `scripts/herdr-app-shim.sh`, a `herdr` stand-in that answers the plugin from `hc`.
+
+This support is display-only: the shim refuses to type into terminals, so the cache warmer and `herdr-cache-view` sorting do not run under Herdr App. The mod runs the scanner with `HERDR_CACHE_DISPLAY_ONLY=1`, so warmer settings in its configuration are ignored: no `↻` marker and no warming checks. As in Herdr, every deadline is an estimate.
+
+### Install
+
+```bash
+./scripts/install-herdr-app-mod.sh
+```
+
+The installer copies the mod, because Herdr App does not reload mods behind a symlinked folder, and records the checkout path. Run it again after updating the checkout. On Windows, run it from Git Bash: Herdr App starts without Git Bash or `jq` on its `PATH`, so the installer also records the Git Bash, `jq`, `python3` and `hc` it finds.
+
+The mod keeps its own state and configuration (`~/.local/state/herdr/plugins/cache-hit-app`, `~/.config/herdr/plugins/config/cache-hit-app`), so it never shares pane ids, locks or settings with a Herdr install of the plugin.
+
+### Show the values
+
+The mod publishes its results as `shared("cache-hit")`, keyed by terminal address:
+
+```json
+{ "panes": { "t2": { "cache": "~19:03 ⇣153.4k", "state": "hot", "deadline": 1793703787, "expires_ms": 1793786594000 } } }
+```
+
+`state` is `hot`, `expiring`, `cold` or `unknown`. A mod only runs while its block is shown, so add it to a personal layout as a 0 px block (a hidden block never starts):
+
+```json
+{ "id": "cache-hit", "type": "block", "content": { "mod": "cache-hit" }, "size": { "px": 0 } }
+```
+
+Docked at a visible size, the mod also renders its own list sorted by deadline.
+
+To show the value on each row of the Agents sidebar, clone the shipped Agents mod and read the shared value in its row renderer:
+
+1. `herdr-app do mod.clone '{"name":"agents","as":"agents-cache"}'`
+2. In `~/.config/herdr-app/mods/agents-cache/main.js`, add the badge to each agent row:
+   ```js
+   const c = shared("cache-hit")?.panes?.[a.address];
+   // ...in the row's h_flex():
+   .when(Boolean(c && c.expires_ms > now), el => el.child(div().flex_none().text_size(11)
+     .text_color({ hot: t.done, expiring: t.blocked }[c.state] ?? t.dim).child(c.cache)))
+   ```
+3. In the personal layout, point the `agents` block at `agents-cache`.
+
+A shipped layout such as `main` does not accept structure changes. Clone it first with `herdr-app do layout.clone '{"name":"main","as":"main-cache"}'`. The clone of `agents` does not follow Herdr App updates, so repeat the recipe after an update that changes the shipped Agents mod.
+
+### How agents are found
+
+The shim lists live local terminals (`hc ls`) and reads each agent's own process and folder from `hc get`. Terminals on other machines (`machine/tN` addresses) are skipped. Herdr reports AGY's session id natively; Herdr App does not, so the shim takes the one AGY session the process holds open (`/proc/<pid>/fd` on Linux, `lsof` on macOS).
+
+On Windows, herdr-core reports only the shell's process. `lib/win_foreground.py` walks the shell's child processes to the agent (through a same-named launcher such as Scoop's `codex.exe`) and reads its folder and arguments. Claude's session comes from `~/.claude/sessions/<pid>.json`, AGY's from the per-process log in `~/.gemini/antigravity-cli/log/`.
 
 ---
 

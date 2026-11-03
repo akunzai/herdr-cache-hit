@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Add experimental, display-only Herdr App support: a bundled mod runs the scanner through a herdr-core shim, including on Windows, and publishes the estimates as `shared("cache-hit")`. The user guide has a recipe for the Agents sidebar.
 - Treat a canceled AGY background task as finished. One canceled task kept the cache warmer out of that session for the rest of its life.
 - Read AGY 1.4 transcripts, which write uncached input and cache reads at the top level of `PLANNER_RESPONSE` steps and have no cache-write count. Without statusline data, such sessions showed no cache value.
 - Keep LF line endings from a native Windows `jq` in Git Bash. Every raw value but the last ended in `\r`, so only one of several agents matched.
