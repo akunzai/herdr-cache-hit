@@ -1,5 +1,8 @@
 # Changelog
 
+## [Unreleased]
+- Keep LF line endings from a native Windows `jq` in Git Bash. Every raw value but the last ended in `\r`, so only one of several agents matched.
+
 ## [0.1.26] - 2026-10-24
 - Preserve Codex's last-request cache counters and timestamp after compaction. Context-only reports with zero request counters no longer erase cache reads or appear as a cache miss, including after a restart without saved state. The parser still accepts real requests with input tokens and zero cache reads.
 - Use a one-hour Codex cache estimate. After that estimate elapses, keep the last-request counters and show unknown cache status instead of claiming eviction; cache misses do not shorten the estimate.
