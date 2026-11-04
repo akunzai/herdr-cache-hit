@@ -1,16 +1,18 @@
 // Experimental Herdr App (GUI) front end for the cache-hit plugin.
 // Install: scripts/install-herdr-app-mod.sh (copies this folder and records the checkout).
 // Every 15 s it runs watch.sh through scripts/herdr-app-shim.sh, then shows
-// the metadata the shim stored for each agent terminal. Display only: the
-// shim refuses to type into terminals, so the cache warmer cannot run here.
+// the metadata the shim stored for each agent terminal.
+// Commands (bind in keys.json): cache-hit.warm-toggle toggles warming for the
+// focused agent; cache-hit.warm-global switches global warming.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, appHome, exec, home, readTextFile, run, setShared, shared, theme } from "herdr";
+import { agents, appHome, exec, focused, home, nextCommand, notify, readTextFile, run, setShared, shared, theme } from "herdr";
 
 const SCAN_MS = 15000;
 // Separate from a Herdr TUI install of the plugin: pane ids, locks and timers differ.
 const STATE_DIR = ".local/state/herdr/plugins/cache-hit-app";
-// Its own config too, so settings for a Herdr TUI install do not apply here.
+// Its own config too, so warming is off until enabled here, whatever a
+// Herdr TUI install has configured.
 const CONFIG_DIR = ".config/herdr/plugins/config/cache-hit-app";
 
 export default class CacheHit extends View {
@@ -28,13 +30,23 @@ export default class CacheHit extends View {
       this.scan(cx);
     });
     cx.timer.every(SCAN_MS, (cx) => this.scan(cx));
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const c = await nextCommand();
+        if (c === "warm-toggle") await this.warm("toggle", focused()?.terminal ?? "");
+        else if (c === "warm-global") await this.warm("global-toggle");
+        this.scan(cx);
+      }
+    });
   }
 
   // The plugin's environment, pointed at Herdr App.
   env() {
     return [
       `HERDR_BIN_PATH=${this.root}/scripts/herdr-app-shim.sh`, "HERDR_NO_TIMER=1",
-      "HERDR_CACHE_DISPLAY_ONLY=1",
+      // The warmer never types into the terminal the person is using.
+      `HERDR_APP_FOCUSED=${focused()?.terminal ?? ""}`,
+      "HERDR_APP_WARMER=1",
       `HERDR_PLUGIN_STATE_DIR=${home()}/${STATE_DIR}`,
       `HERDR_PLUGIN_CONFIG_DIR=${home()}/${CONFIG_DIR}`,
     ];
@@ -48,6 +60,19 @@ export default class CacheHit extends View {
         this.path, ...vars, "bash", script, ...args], { cwd: this.root });
     }
     return exec("env", [...vars, "sh", `${this.root}/scripts/run-bash.sh`, script, ...args], { cwd: this.root });
+  }
+
+  async warm(action, terminal = "") {
+    if (!this.root) return;
+    if (action === "toggle" && !terminal) {
+      notify({ title: "Cache warming", body: "Focus a Codex, AGY or Claude terminal first.", level: "warning" });
+      return;
+    }
+    const r = await this.bashExec([...this.env(), `HERDR_ACTIVE_PANE_ID=${terminal}`],
+      `${this.root}/bin/herdr-cache-warm`, [action]);
+    const out = (r.code === 0 ? r.stdout : r.stderr).trim() || `exit ${r.code}`;
+    const body = r.code === 0 || !terminal ? out : `${out} (${terminal})`;
+    notify({ title: "Cache warming", body, level: r.code === 0 ? "info" : "warning" });
   }
 
   scan(cx) {

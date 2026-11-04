@@ -8,11 +8,13 @@
 #   HERDR_BIN_PATH=scripts/herdr-app-shim.sh HERDR_NO_TIMER=1 \
 #     HERDR_CACHE_DISPLAY_ONLY=1 bash watch.sh
 #
-# Supported: api snapshot, pane list, pane process-info, pane report-metadata.
-# Anything else fails: herdr-cache-view sorting stays inactive, and the cache
-# warmer cannot type into a terminal (`agent prompt`) under Herdr App.
-# HERDR_CACHE_DISPLAY_ONLY=1 makes the plugin skip warming altogether.
-# Every pane reports as focused, so the warmer's focus guard also holds.
+# Supported: api snapshot, pane list, pane process-info, pane report-metadata,
+# agent read, agent prompt, notification show. Anything else (agent.view.*)
+# fails, so herdr-cache-view sorting stays inactive under Herdr App.
+#
+# HERDR_APP_FOCUSED: the focused terminal address ("" = none). When unset,
+# every pane counts as focused, so the warmer's focus guard always holds.
+# HERDR_APP_WARMER=1: allow `agent prompt`; without it nothing is typed.
 set -u
 SHIM_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="${SHIM_DIR%/scripts}"
@@ -20,6 +22,10 @@ PLUGIN_DIR="${SHIM_DIR%/scripts}"
 export HERDR_BIN_PATH="$SHIM_DIR/herdr-app-shim.sh"
 # shellcheck source=lib/core.sh
 . "$PLUGIN_DIR/lib/core.sh"
+# shellcheck source=lib/codex.sh
+. "$PLUGIN_DIR/lib/codex.sh"
+# shellcheck source=lib/claude.sh
+. "$PLUGIN_DIR/lib/claude.sh"
 HC_BIN="${HC_BIN_PATH:-hc}"
 META_DIR="$STATE_DIR/app-metadata"
 
@@ -78,12 +84,33 @@ hc_terminals() {
     [[ -n "$sid" ]] || sid=$(jq -r '.claude_session // ""' <<<"$info")
     out+=("$(jq -c --arg sid "$sid" '. + {known_session: $sid}' <<<"$info")")
   done
-  printf '%s\n' "${out[@]+"${out[@]}"}" | jq -cs "$AGENT_MAP"'
+  local panes focused="${HERDR_APP_FOCUSED-*}"
+  panes=$(printf '%s\n' "${out[@]+"${out[@]}"}" | jq -cs --arg focused "$focused" "$AGENT_MAP"'
     [.[] | select(type == "object") | ((.status.app // .foreground.name // "") | plugin_agent) as $agent | select($agent != null)
      | {pane_id: .address, agent: $agent, agent_status: (.status.state // null),
         cwd: (.foreground.cwd // .cwd // null), foreground_cwd: (.foreground.cwd // .cwd // null),
-        terminal_title: (.title // ""), focused: true,
-        agent_session: (if .known_session != "" then {kind: "id", value: .known_session} else null end)}]'
+        terminal_title: (.title // ""), focused: ($focused == "*" or $focused == .address),
+        agent_session: (if .known_session != "" then {kind: "id", value: .known_session} else null end)}]') || return 1
+  with_resolved_sessions "$panes"
+}
+
+# Herdr TUI reports Claude and Codex session ids natively. Resolve them here
+# with the plugin's own resolvers, so the warmer's identity check can match.
+with_resolved_sessions() {
+  local panes=$1 rows pane agent cwd sid group
+  rows=$(jq -r '.[] | select((.agent == "claude" or .agent == "codex") and .agent_session == null) | [.pane_id, .agent, (.cwd // "")] | @tsv' <<<"$panes") || return 1
+  while IFS=$'\t' read -r pane agent cwd; do
+    [[ -n "$pane" ]] || continue
+    group=$(jq -c --arg agent "$agent" '[.[] | select(.agent == $agent)]' <<<"$panes")
+    sid=""
+    case "$agent" in
+      claude) sid=$(claude_session_for_pane "$pane" "$cwd" "$group") || sid="" ;;
+      codex) sid=$(codex_session_for_pane "$pane" "$cwd" "$group") || sid="" ;;
+    esac
+    [[ -n "$sid" ]] || continue
+    panes=$(jq -c --arg pane "$pane" --arg sid "$sid" 'map(if .pane_id == $pane then .agent_session = {kind: "id", value: $sid} else . end)' <<<"$panes")
+  done <<<"$rows"
+  printf '%s\n' "$panes"
 }
 
 # Prints the session id only when the process holds exactly one session open.
@@ -189,10 +216,55 @@ report_metadata() {
   mv -f "$tmp" "$file"
 }
 
+# `agent read <pane> --source recent --lines N`: the last N lines of the screen.
+agent_read() {
+  local pane=${1:-} lines=12; shift || true
+  while (($#)); do
+    case "$1" in
+      --lines) lines=${2:-12}; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  [[ -n "$pane" && "$lines" =~ ^[0-9]+$ ]] || return 1
+  "$HC_BIN" read "$pane" 2>/dev/null | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}' | tail -n "$lines"
+}
+
+# `agent prompt <pane> <text> --wait --timeout <ms>`. The warmer has already
+# checked idle state, focus and the prompt editor. hc refuses `--if idle` for
+# an agent that is `done` (finished, not yet seen), so re-check the status
+# here and use the atomic guard whenever the agent is plainly idle.
+agent_prompt() {
+  local pane=${1:-} text=${2:-} wait=false timeout_ms=120000 status
+  shift 2 || return 1
+  while (($#)); do
+    case "$1" in
+      --wait) wait=true; shift ;;
+      --timeout) timeout_ms=${2:-120000}; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  [[ "${HERDR_APP_WARMER:-}" == 1 ]] || { echo "herdr-app-shim: agent prompt disabled (set HERDR_APP_WARMER=1)" >&2; return 1; }
+  [[ -n "$pane" && -n "$text" ]] || return 1
+  status=$("$HC_BIN" get "$pane" --json 2>/dev/null | jq -r '.status.state // ""') || return 1
+  case "$status" in
+    idle) "$HC_BIN" send "$pane" "$text" --if idle >/dev/null || return 1 ;;
+    done) "$HC_BIN" send "$pane" "$text" >/dev/null || return 1 ;;
+    *) return 1 ;;
+  esac
+  [[ "$timeout_ms" =~ ^[0-9]+$ ]] || timeout_ms=120000
+  if [[ "$wait" == true ]]; then
+    "$HC_BIN" wait "$pane" --timeout "$(( (timeout_ms + 999) / 1000 ))" >/dev/null 2>&1 || true
+  fi
+}
+
 case "${1:-} ${2:-}" in
   "api snapshot") snapshot ;;
   "pane list") pane_list ;;
   "pane process-info") shift 2; process_info "$@" ;;
   "pane report-metadata") shift 2; report_metadata "$@" ;;
+  "agent read") shift 2; agent_read "$@" ;;
+  "agent prompt") shift 2; agent_prompt "$@" ;;
+  # Herdr App shows its own notifications from mods; nothing to do here.
+  "notification show") exit 0 ;;
   *) echo "herdr-app-shim: unsupported: $*" >&2; exit 1 ;;
 esac
